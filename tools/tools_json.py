@@ -28,5 +28,26 @@ TOOLS_LIST = [
                 "required": ["query"]
             }
         }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "query_fault_history",
+        "description": "查询设备的历史故障记录",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "equipment_id": {
+                    "type": "string",
+                    "description": "设备编号，如EQ001（可选）"
+                },
+                "fault_type": {
+                    "type": "string", 
+                    "description": "故障类型，如'轴承异响'（可选）"
+                }
+            }
+            # 注意：这两个参数都是可选的，不要写required
+        }
     }
+}
 ]

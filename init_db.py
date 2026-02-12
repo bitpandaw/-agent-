@@ -12,10 +12,9 @@ def init_database():
     CREATE TABLE IF NOT EXISTS fault_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fault_type TEXT,
-        days_ago INTEGER,
         occurrence_date TEXT,
         solution TEXT,
-        owntime_hours REAL,
+        downtime_hours REAL,
         equipment_id TEXT,
         CHECK(fault_type IN ('轴承异响', '温度异常', '振动异常', '液压系统故障'))
     )
@@ -38,12 +37,18 @@ def init_database():
     # TODO 3: 生成50条记录（你来写循环）
     for i in range(50):
         # 提示：
-        fault_types = random.choice(fault_types)
-        pass
+        fault_type = random.choice(fault_types)
+        days_ago = random.randint(0, 90)  # randint 包括两端值
+        occurrence_date = (base_date- timedelta(days=days_ago)).strftime('%Y-%m-%d')
+        solution = random.choice(solutions[fault_type])
+        downtime_hours = round(random.uniform(0.5,8),1)
+        equipment_id = random.choice(equipment_ids)
+        record = (equipment_id, fault_type, occurrence_date, solution, downtime_hours)
+        records.append(record)
     
     # TODO 4: 插入数据（你来写）
     # cursor.executemany('INSERT INTO ...', records)
-    
+    cursor.executemany("INSERT INTO fault_records(equipment_id, fault_type, occurrence_date, solution, downtime_hours) VALUES(?,?,?,?,?)",records)
     conn.commit()
     
     # 验证（这段我给你写好了）

@@ -1,15 +1,25 @@
 ﻿# tool_registry.py
 from sentence_transformers import SentenceTransformer
-import sqlite3
+import sqlite3,time
 from config.config_loader import config
 from pathlib import Path
-embedding_model = config["embedding"]
-cache_dir_cfg = embedding_model.get("cache_dir", ".hf_cache")
-cache_dir = Path(cache_dir_cfg)
-model = SentenceTransformer(
-    embedding_model["model_name"], 
-    cache_folder=embedding_model["cache_dir"]
-)
+_embedding_model = None
+def get_embedding_model():
+    global _embedding_model 
+    if _embedding_model is not None:
+        return _embedding_model
+    else:
+        embedding_model = config["embedding"]
+        cache_dir_cfg = embedding_model.get("cache_dir", ".hf_cache")
+        cache_dir = Path(cache_dir_cfg)
+        if not cache_dir.is_absolute():
+            cache_dir = (Path(__file__).resolve().parent.parent / cache_dir).resolve()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        _embedding_model = SentenceTransformer(
+            embedding_model["model_name"], 
+            cache_folder=cache_dir
+        )
+        return _embedding_model
 def calculator(expression: str):
     # Keep eval constrained to avoid arbitrary code execution.
     try:
@@ -19,15 +29,19 @@ def calculator(expression: str):
 
 def search_knowledge(query: str, collection, top_k: int = 2) -> str:
     """Search for relevant documents."""
+    model = get_embedding_model()
     query_embedding = model.encode(query).tolist()
-    try:
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k
-        )
-    except Exception as e:
-        raise Exception(f"Vector DB query failed: {e}")
-
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k
+            )
+        except Exception as e:
+            if attempt == max_retries - 1:
+                return f"Vector DB query failed after {max_retries} retries: {e}"
+            time.sleep(10)
     documents = results.get("documents", [[]])[0]
     if not documents:
         return "No relevant documents found."
@@ -51,8 +65,8 @@ def query_fault_history(equipment_id=None, fault_type=None):
     cursor.execute(sql,params)
     rows = cursor.fetchall()
     if not rows:
+        conn.close()
         return "未找到符合条件的故障记录"
-    
     lines = [f"找到{len(rows)}条记录："]
     for i,row in enumerate(rows, 1):
         _,ft,date,sol,hours,eq =row

@@ -1,30 +1,15 @@
 ﻿from openai import OpenAI
 import chromadb,os,json,inspect
-from sentence_transformers import SentenceTransformer
-from tools.tool_registry import TOOL_REGISTRY
+from tools.tool_registry import TOOL_REGISTRY, get_embedding_model
 import tools.tools_json as tools
 from config.config_loader import config
-from pathlib import Path
+import time
 # 初始化客户端
 llm_cfg = config["llm"]
-embedding_model = config["embedding"]
-cache_dir_cfg = embedding_model.get("cache_dir", ".hf_cache")
-cache_dir = Path(cache_dir_cfg)
-if not cache_dir.is_absolute():
-    cache_dir = (Path(__file__).resolve().parent / cache_dir).resolve()
-
-cache_dir.mkdir(parents=True, exist_ok=True)
-
 client = OpenAI(
     api_key= os.environ.get(llm_cfg["api_key_env"]),
     base_url = llm_cfg["base_url"]
 )
-
-model = SentenceTransformer(
-    embedding_model["model_name"], 
-    cache_folder=embedding_model["cache_dir"]
-)
-
 def call_tool(tool_func,tool_args,collection):
     kwargs = dict(tool_args or {})
     sig = inspect.signature(tool_func)
@@ -51,6 +36,7 @@ def load_and_chunk_document(filepath):
 # Step 2: 把文档块存入ChromaDB
 def index_documents(chunks):
     """为文档块生成embedding并存入向量数据库"""
+    model = get_embedding_model()
     for i, chunk in enumerate(chunks):
         embedding = model.encode(chunk).tolist()
         collection.add(
@@ -68,7 +54,7 @@ def main():
     conversation = [
         {"role": "system", "content": "你是一个工业设备故障诊断专家。当用户提问时，使用search_knowledge工具从手册中检索相关信息，然后基于检索到的内容给出专业建议。"}
     ]
-    
+
     print("\n=== RAG驱动的设备诊断助手 ===")
     print("(输入 'quit' 退出)\n")
     
@@ -79,14 +65,19 @@ def main():
         
         conversation.append({"role": "user", "content": user_input})
         while True:
-            try:
-                response = client.chat.completions.create(
-                    model=llm_cfg["model"],
-                    messages=conversation,
-                    tools=tools.TOOLS_LIST
-                )
-            except Exception as e:
-                raise Exception(f"与client连接失败,错误原因:{e}") 
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = client.chat.completions.create(
+                        model=llm_cfg["model"],
+                        messages=conversation,
+                        tools=tools.TOOLS_LIST
+                    )
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise Exception(f"与client连接失败,错误原因:{e}")
+                    time.sleep(10)
             ai_reply = response.choices[0].message
             if not ai_reply.tool_calls:
                 conversation.append({"role": "assistant", "content": ai_reply.content})

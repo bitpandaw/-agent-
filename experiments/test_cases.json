@@ -1,0 +1,22 @@
+{
+  "test_suite_version": "v1.0",
+  "created_date": "2025-02-13",
+  "categories": {
+    "rag_retrieval": {
+      "description": "测试RAG知识库检索能力",
+      "cases": []
+    },
+    "sql_query": {
+      "description": "测试历史故障记录查询",
+      "cases": []
+    },
+    "calculator": {
+      "description": "测试计算工具",
+      "cases": []
+    },
+    "multi_tool": {
+      "description": "测试多工具协同",
+      "cases": []
+    }
+  }
+}

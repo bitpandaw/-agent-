@@ -1,0 +1,15 @@
+embedding:
+  provider: "sentence_transformers"
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  cache_dir: ".hf_cache"
+
+rag:
+  top_k: 2
+  score_threshold: 0.3
+db:
+  path: "fault_history.db"
+llm:
+  provider: "deepseek"
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com/v1"
+  api_key_env: "DEEPSEEK_API_KEY"

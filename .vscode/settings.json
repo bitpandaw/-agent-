@@ -1,3 +1,4 @@
 {
-  "CodeGPT.apiKey": "Github Copilot"
+  "CodeGPT.apiKey": "Github Copilot",
+  "editor.formatOnSave": true
 }

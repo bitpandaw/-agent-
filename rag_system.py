@@ -1,17 +1,30 @@
-from openai import OpenAI
-import chromadb
-import os
-import json
+﻿from openai import OpenAI
+import chromadb,os,json,inspect
 from sentence_transformers import SentenceTransformer
 from tools.tool_registry import TOOL_REGISTRY
 import tools.tools_json as tools
-import inspect
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+from config.config_loader import config
+from pathlib import Path
 # 初始化客户端
+llm_cfg = config["llm"]
+embedding_model = config["embedding"]
+cache_dir_cfg = embedding_model.get("cache_dir", ".hf_cache")
+cache_dir = Path(cache_dir_cfg)
+if not cache_dir.is_absolute():
+    cache_dir = (Path(__file__).resolve().parent / cache_dir).resolve()
+
+cache_dir.mkdir(parents=True, exist_ok=True)
+
 client = OpenAI(
-    api_key=os.environ.get("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com/v1"
+    api_key= os.environ.get(llm_cfg["api_key_env"]),
+    base_url = llm_cfg["base_url"]
 )
+
+model = SentenceTransformer(
+    embedding_model["model_name"], 
+    cache_folder=embedding_model["cache_dir"]
+)
+
 def call_tool(tool_func,tool_args,collection):
     kwargs = dict(tool_args or {})
     sig = inspect.signature(tool_func)
@@ -25,7 +38,7 @@ def call_tool(tool_func,tool_args,collection):
         return f"tool call argument error:{e}"
 # 初始化ChromaDB
 chroma_client = chromadb.Client()
-collection = chroma_client.create_collection(name="equipment_knowledge")
+collection = chroma_client.get_or_create_collection(name="equipment_knowledge")
 # Step 1: 读取文档并分段
 def load_and_chunk_document(filepath):
     """读取文档并按段落分割"""
@@ -49,7 +62,7 @@ def index_documents(chunks):
 # Step 4: 主Agent循环
 def main():
     # 初始化：加载文档
-    print("📚 正在加载知识库...")
+    print("正在加载知识库...")
     chunks = load_and_chunk_document("equipment_knowledge.txt")
     index_documents(chunks)
     conversation = [
@@ -68,13 +81,12 @@ def main():
         while True:
             try:
                 response = client.chat.completions.create(
-                    model="deepseek-chat",
+                    model=llm_cfg["model"],
                     messages=conversation,
                     tools=tools.TOOLS_LIST
                 )
             except Exception as e:
-                print(f"LLM调用失败:{e}")
-                continue
+                raise Exception(f"与client连接失败,错误原因:{e}") 
             ai_reply = response.choices[0].message
             if not ai_reply.tool_calls:
                 conversation.append({"role": "assistant", "content": ai_reply.content})

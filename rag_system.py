@@ -5,14 +5,24 @@ import json
 from sentence_transformers import SentenceTransformer
 from tools.tool_registry import TOOL_REGISTRY
 import tools.tools_json as tools
+import inspect
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
 # 初始化客户端
 client = OpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com/v1"
 )
-
+def call_tool(tool_func,tool_args,collection):
+    kwargs = dict(tool_args or {})
+    sig = inspect.signature(tool_func)
+    params = sig.parameters
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if "collection" in params or has_var_kw:
+        kwargs.setdefault("collection",collection)
+    try:
+        return tool_func(**kwargs)
+    except TypeError as e:
+        return f"tool call argument error:{e}"
 # 初始化ChromaDB
 chroma_client = chromadb.Client()
 collection = chroma_client.create_collection(name="equipment_knowledge")
@@ -76,12 +86,15 @@ def main():
             })
             for tool_call in ai_reply.tool_calls:
                 tool_name = tool_call.function.name
-                tool_func = TOOL_REGISTRY[tool_name]
+                tool_func = TOOL_REGISTRY.get(tool_name)
                 tool_args = json.loads(tool_call.function.arguments)
-                result = tool_func(**tool_args,collection=collection)
+                if tool_func is None:
+                    result = f"Unknown tool: {tool_name}"
+                else:
+                    result = call_tool(tool_func,tool_args,collection)
                 conversation.append({
                     "role": "tool",
-                    "content": result,
+                    "content": str(result),
                     "tool_call_id": tool_call.id,
                     "name": tool_name
                 })

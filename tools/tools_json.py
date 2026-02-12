@@ -39,7 +39,7 @@ TOOLS_LIST = [
             "properties": {
                 "equipment_id": {
                     "type": "string",
-                    "description": "设备编号，如EQ001（可选）"
+                    "description": "设备编号,如EQ001(可选)"
                 },
                 "fault_type": {
                     "type": "string", 

@@ -1,7 +1,0 @@
-import httpx
-
-try:
-    resp = httpx.get("https://huggingface.co/microsoft/MiniLM-L6-v2/resolve/main/onnx/model.onnx", timeout=10)
-    print("状态码:", resp.status_code)
-except Exception as e:
-    print("连接失败:", e)

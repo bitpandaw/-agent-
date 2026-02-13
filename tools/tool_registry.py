@@ -91,7 +91,7 @@ def query_fault_history(action: Dict[str, Any], context: Dict[str, Any])->Dict[s
         _,ft,date,sol,hours,eq =row
         lines.append(f"{i}. {eq} - {ft} - {date} - 解决方案：{sol} - 停机{hours}小时")
     conn.close()
-    return make_result(False, "S_DB_QUERY", "找到匹配数据", "\n".join(lines), (time.perf_counter() - start) * 1000)
+    return make_result(True, "S_DB_QUERY", "找到匹配数据", "\n".join(lines), (time.perf_counter() - start) * 1000)
 
 # Tool registry
 TOOL_REGISTRY: Dict[str, ToolFunc] = {
@@ -99,10 +99,3 @@ TOOL_REGISTRY: Dict[str, ToolFunc] = {
     "calculator": calculator,
     "query_fault_history":query_fault_history
 }
-def execute_action(plan_action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    tool_name = plan_action["tool_name"]
-    tool_args = plan_action.get("tool_args", {})
-    tool = TOOL_REGISTRY.get(tool_name)
-    if tool is None:
-        return make_result(False, "E_TOOL_NOT_FOUND", f"unknown tool: {tool_name}", None, 0)
-    return tool(tool_args, context)

@@ -1,15 +1,53 @@
 ﻿from openai import OpenAI
 import chromadb,os,json,inspect
 from tools.tool_registry import TOOL_REGISTRY, get_embedding_model
+from executor.executor import execute_actions
 import tools.tools_json as tools
 from config.config_loader import config
 import time
+
 # 初始化客户端
 llm_cfg = config["llm"]
 client = OpenAI(
     api_key= os.environ.get(llm_cfg["api_key_env"]),
     base_url = llm_cfg["base_url"]
 )
+
+# Bridge helper: try running the new executor pipeline first, and keep
+# the original per-tool fallback path for safety.
+def run_executor_bridge(tool_calls, collection):
+    plan_actions = []
+    needs_embedding_model = False
+    for tc in tool_calls:
+        tool_name = tc.function.name
+        try:
+            tool_args = json.loads(tc.function.arguments)
+        except Exception:
+            tool_args = {}
+        if tool_name == "query_fault_history":
+            tool_args.setdefault("equipment_id", None)
+            tool_args.setdefault("fault_type", None)
+        if tool_name == "search_knowledge":
+            needs_embedding_model = True
+        plan_actions.append({
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "tool_call_id": tc.id,
+        })
+
+    runtime = {"collection": collection}
+    if needs_embedding_model:
+        runtime["model"] = get_embedding_model()
+
+    try:
+        tool_events = execute_actions(plan_actions, TOOL_REGISTRY, runtime)
+    except Exception as e:
+        return False, f"executor bridge failed, fallback to legacy path: {e}"
+
+    if not isinstance(tool_events, list):
+        return False, "executor bridge returned non-list result, fallback to legacy path"
+    return True, tool_events
+
 def call_tool(tool_func,tool_args,collection):
     action = dict(tool_args or {})
     context = {"collection":collection} 
@@ -88,6 +126,25 @@ def main():
                 "content": ai_reply.content or "",
                 "tool_calls": [tc.to_dict() for tc in ai_reply.tool_calls],
             })
+
+            # New path: execute all tool calls through executor bridge.
+            bridge_ok, bridge_payload = run_executor_bridge(ai_reply.tool_calls, collection)
+            if bridge_ok:
+                tool_events = bridge_payload
+                for idx, event in enumerate(tool_events):
+                    tc = ai_reply.tool_calls[idx] if idx < len(ai_reply.tool_calls) else ai_reply.tool_calls[-1]
+                    event_name = event.get("tool_name", tc.function.name) if isinstance(event, dict) else tc.function.name
+                    conversation.append({
+                        "role": "tool",
+                        "content": json.dumps(event, ensure_ascii=False),
+                        "tool_call_id": tc.id,
+                        "name": event_name,
+                    })
+                # Keep original logic below as fallback only.
+                continue
+            else:
+                print(bridge_payload)
+
             for tool_call in ai_reply.tool_calls:
                 tool_name = tool_call.function.name
                 tool_func = TOOL_REGISTRY.get(tool_name)

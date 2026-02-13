@@ -91,7 +91,7 @@ def query_fault_history(action: Dict[str, Any], context: Dict[str, Any])->Dict[s
         _,ft,date,sol,hours,eq =row
         lines.append(f"{i}. {eq} - {ft} - {date} - 解决方案：{sol} - 停机{hours}小时")
     conn.close()
-    return make_result(False, "F_DB_QUERY", "未找到匹配数据", "\n".join(lines), (time.perf_counter() - start) * 1000)
+    return make_result(False, "S_DB_QUERY", "找到匹配数据", "\n".join(lines), (time.perf_counter() - start) * 1000)
 
 # Tool registry
 TOOL_REGISTRY: Dict[str, ToolFunc] = {

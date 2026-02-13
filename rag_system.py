@@ -12,11 +12,16 @@ client = OpenAI(
 )
 def call_tool(tool_func,tool_args,collection):
     action = dict(tool_args or {})
-    context = {"collection": collection}
-    try:
-        return tool_func(action, context)
-    except TypeError as e:
-        return f"tool call argument error:{e}"
+    context = {"collection":collection} 
+    sig = inspect.signature(tool_func)
+    params = sig.parameters
+    tool_name = tool_func.__name__
+    if tool_name == "search_knowledge":
+        context["model"] = get_embedding_model()
+    elif tool_name == "query_fault_history":
+        action.setdefault("equipment_id", None)
+        action.setdefault("fault_type", None)
+    return tool_func(action, context)
 # 初始化ChromaDB
 chroma_client = chromadb.Client()
 collection = chroma_client.get_or_create_collection(name="equipment_knowledge")

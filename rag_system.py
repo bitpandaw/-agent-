@@ -11,14 +11,10 @@ client = OpenAI(
     base_url = llm_cfg["base_url"]
 )
 def call_tool(tool_func,tool_args,collection):
-    kwargs = dict(tool_args or {})
-    sig = inspect.signature(tool_func)
-    params = sig.parameters
-    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-    if "collection" in params or has_var_kw:
-        kwargs.setdefault("collection",collection)
+    action = dict(tool_args or {})
+    context = {"collection": collection}
     try:
-        return tool_func(**kwargs)
+        return tool_func(action, context)
     except TypeError as e:
         return f"tool call argument error:{e}"
 # 初始化ChromaDB

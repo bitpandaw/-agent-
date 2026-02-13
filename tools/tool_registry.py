@@ -3,7 +3,18 @@ from sentence_transformers import SentenceTransformer
 import sqlite3,time
 from config.config_loader import config
 from pathlib import Path
+from typing import Any, Dict, Callable
 _embedding_model = None
+def make_result(ok: bool, code: str, message: str, payload: Any, latency_ms: float) -> Dict[str, Any]:
+    return {
+        "ok": ok,
+        "code": code,
+        "message": message,
+        "payload": payload,
+        "latency_ms": round(latency_ms, 2)
+    }
+
+ToolFunc = Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]
 def get_embedding_model():
     global _embedding_model 
     if _embedding_model is not None:
@@ -20,36 +31,44 @@ def get_embedding_model():
             cache_folder=cache_dir
         )
         return _embedding_model
-def calculator(expression: str):
-    # Keep eval constrained to avoid arbitrary code execution.
+def calculator(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
+    start = time.perf_counter()
+    expression = action["expression"]
     try:
-        return eval(expression, {"__builtins__": {}}, {})
+        payload = eval(expression)
+        return make_result(True, "S_ADD", "add success", payload, (time.perf_counter() - start) * 1000)
     except Exception as e:
-        return f"Calculator error: {e}"
-
-def search_knowledge(query: str, collection, top_k: int = 2) -> str:
-    """Search for relevant documents."""
-    model = get_embedding_model()
+        return make_result(False, "E_ADD", f"add failed: {e}", None, (time.perf_counter() - start) * 1000)
+def search_knowledge(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
+    start = time.perf_counter()
+    query = action["query"]
+    collection = context["collection"]
+    model = context["model"]
     query_embedding = model.encode(query).tolist()
     max_retries = 3
     for attempt in range(max_retries):
         try:
             results = collection.query(
                 query_embeddings=[query_embedding],
-                n_results=top_k
+                n_results=2
             )
+            break
         except Exception as e:
             if attempt == max_retries - 1:
-                return f"Vector DB query failed after {max_retries} retries: {e}"
+                return make_result(False, "E_RAG_QUERY", "查询超时ChromaDB", None, (time.perf_counter() - start) * 1000)
             time.sleep(10)
     documents = results.get("documents", [[]])[0]
     if not documents:
-        return "No relevant documents found."
-    return "Found relevant documents:\n\n" + "\n\n---\n\n".join(documents)
-def query_fault_history(equipment_id=None, fault_type=None):
+        return make_result(False, "E_RAG_DOC", "没有找到文件", None, (time.perf_counter() - start) * 1000)
+    result = "Found relevant documents:\n\n" + "\n\n---\n\n".join(documents)
+    return make_result(True, "S_RAG_QUERY", "查询到ChromaDB", result, (time.perf_counter() - start) * 1000)
+def query_fault_history(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
+    start = time.perf_counter()
     conn = sqlite3.connect('fault_history.db')
     cursor = conn.cursor()
     params = ()
+    equipment_id = action["equipment_id"]
+    fault_type = action["fault_type"]
     sql = "SELECT * FROM fault_records "
     if equipment_id and fault_type:
         sql+="WHERE equipment_id = ? AND fault_type = ?"
@@ -66,23 +85,24 @@ def query_fault_history(equipment_id=None, fault_type=None):
     rows = cursor.fetchall()
     if not rows:
         conn.close()
-        return "未找到符合条件的故障记录"
+        return make_result(False, "F_DB_QUERY", "未找到匹配数据", None, (time.perf_counter() - start) * 1000)
     lines = [f"找到{len(rows)}条记录："]
     for i,row in enumerate(rows, 1):
         _,ft,date,sol,hours,eq =row
         lines.append(f"{i}. {eq} - {ft} - {date} - 解决方案：{sol} - 停机{hours}小时")
     conn.close()
-    return "\n".join(lines)
+    return make_result(False, "F_DB_QUERY", "未找到匹配数据", "\n".join(lines), (time.perf_counter() - start) * 1000)
 
 # Tool registry
-tool_registry = {
-    "search_knowledge": lambda query, collection, top_k=2: search_knowledge(query, collection, top_k),
-    "calculator": lambda expression, collection=None: calculator(expression),
-    "query_fault_history": lambda equipment_id=None, fault_type=None, collection=None: query_fault_history(
-        equipment_id=equipment_id,
-        fault_type=fault_type
-    )
+TOOL_REGISTRY: Dict[str, ToolFunc] = {
+    "search_knowledge": search_knowledge,
+    "calculator": calculator,
+    "query_fault_history":query_fault_history
 }
-
-# Backward-compatible name
-TOOL_REGISTRY = tool_registry
+def execute_action(plan_action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    tool_name = plan_action["tool_name"]
+    tool_args = plan_action.get("tool_args", {})
+    tool = TOOL_REGISTRY.get(tool_name)
+    if tool is None:
+        return make_result(False, "E_TOOL_NOT_FOUND", f"unknown tool: {tool_name}", None, 0)
+    return tool(tool_args, context)

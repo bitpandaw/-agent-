@@ -4,6 +4,7 @@ import sqlite3,time
 from config.config_loader import config
 from pathlib import Path
 from typing import Any, Dict, Callable
+from rag.rag_pipeline import retrieve_context
 _embedding_model = None
 def make_result(ok: bool, code: str, message: str, payload: Any, latency_ms: float) -> Dict[str, Any]:
     return {
@@ -42,25 +43,20 @@ def calculator(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
 def search_knowledge(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
     start = time.perf_counter()
     query = action["query"]
-    collection = context["collection"]
-    model = context["model"]
-    query_embedding = model.encode(query).tolist()
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            results = collection.query(
-                query_embeddings=[query_embedding],
-                n_results=2
-            )
+            results = retrieve_context(query,context,2,0.3)
             break
         except Exception as e:
             if attempt == max_retries - 1:
                 return make_result(False, "E_RAG_QUERY", "查询超时ChromaDB", None, (time.perf_counter() - start) * 1000)
             time.sleep(10)
-    documents = results.get("documents", [[]])[0]
-    if not documents:
+    if not results:
         return make_result(False, "E_RAG_DOC", "没有找到文件", None, (time.perf_counter() - start) * 1000)
-    result = "Found relevant documents:\n\n" + "\n\n---\n\n".join(documents)
+    result = "Found relevant documents:\n\n" + "\n\n---\n\n"
+    for index, item in enumerate(results, start=1):
+        result += f"rank: {index} score: {item['score']} text: {item['text']}\n"
     return make_result(True, "S_RAG_QUERY", "查询到ChromaDB", result, (time.perf_counter() - start) * 1000)
 def query_fault_history(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
     start = time.perf_counter()

@@ -19,7 +19,7 @@ def make_result(
 def execute_actions(
     plan_actions: List[Dict[str, Any]],
     tool_registry: Dict[str, Any],
-    runtime: Dict[str, Any],
+    context: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     tool_events: List[Dict[str,Any]] = []
     
@@ -27,7 +27,6 @@ def execute_actions(
         start = time.perf_counter()
         tool_name = action.get("tool_name")
         tool_args = action.get("tool_args")
-        
         tool = tool_registry.get(tool_name)
         if tool is None:
             tool_events.append(
@@ -35,7 +34,7 @@ def execute_actions(
            )
             continue
         try:
-            raw = tool(tool_args,runtime)
+            raw = tool(tool_args,context)
             required = {"ok", "code", "message", "payload", "latency_ms"}
             if isinstance(raw, dict) and required.issubset(raw.keys()):
                 raw["tool_name"] = tool_name

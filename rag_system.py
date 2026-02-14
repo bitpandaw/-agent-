@@ -35,12 +35,12 @@ def run_executor_bridge(tool_calls, collection):
             "tool_call_id": tc.id,
         })
 
-    runtime = {"collection": collection}
+    context = {"collection": collection}
     if needs_embedding_model:
-        runtime["model"] = get_embedding_model()
+        context["model"] = get_embedding_model()
 
     try:
-        tool_events = execute_actions(plan_actions, TOOL_REGISTRY, runtime)
+        tool_events = execute_actions(plan_actions, TOOL_REGISTRY, context)
     except Exception as e:
         return False, f"executor bridge failed, fallback to legacy path: {e}"
 

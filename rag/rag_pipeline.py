@@ -41,7 +41,6 @@ def retrieve_context(
     eps = 1e-8
     final_result = []
     for i,distance in enumerate(distances):
-        
         norm = (d_max - distance) / (d_max - d_min + eps)
         if norm>=score_threshold:
             final_result.append({"text":documents[i]

@@ -13,3 +13,10 @@ llm:
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
   api_key_env: "DEEPSEEK_API_KEY"
+paths:
+  db: "fault_history.db"
+  knowledge_file: "equipment_knowledge.txt"
+  state_dir: "state/logs"
+  chroma_dir: "chroma_db"
+  cache_dir: ".hf_cache"
+  record_file: "record/record.json"

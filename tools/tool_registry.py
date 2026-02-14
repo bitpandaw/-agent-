@@ -36,7 +36,7 @@ def calculator(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
     start = time.perf_counter()
     expression = action["expression"]
     try:
-        payload = eval(expression)
+        payload = eval(expression, {"__builtins__": {}}, {})
         return make_result(True, "S_ADD", "add success", payload, (time.perf_counter() - start) * 1000)
     except Exception as e:
         return make_result(False, "E_ADD", f"add failed: {e}", None, (time.perf_counter() - start) * 1000)

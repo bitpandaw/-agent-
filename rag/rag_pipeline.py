@@ -36,12 +36,16 @@ def retrieve_context(
     )
     distances = results.get("distances",[[]])[0]
     documents = results.get("documents", [[]])[0]
+    d_min = min(distances)
+    d_max = max(distances)
+    eps = 1e-8
     final_result = []
     for i,distance in enumerate(distances):
-        score = 1- distance
-        if score>=score_threshold:
+        
+        norm = (d_max - distance) / (d_max - d_min + eps)
+        if norm>=score_threshold:
             final_result.append({"text":documents[i]
-                                 ,"score":score})
+                                    ,"score":norm})
     final_result = sorted(final_result,reverse=True,key=lambda x: x["score"])
     return final_result
 

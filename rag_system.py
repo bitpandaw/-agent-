@@ -129,6 +129,7 @@ def main():
 
             # New path: execute all tool calls through executor bridge.
             bridge_ok, bridge_payload = run_executor_bridge(ai_reply.tool_calls, collection)
+            print(ai_reply.tool_calls)
             if bridge_ok:
                 tool_events = bridge_payload
                 for idx, event in enumerate(tool_events):

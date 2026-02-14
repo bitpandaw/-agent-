@@ -44,9 +44,10 @@ def search_knowledge(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,
     start = time.perf_counter()
     query = action["query"]
     max_retries = 3
+    rag = config["rag"]
     for attempt in range(max_retries):
         try:
-            results = retrieve_context(query,context,2,0.3)
+            results = retrieve_context(query,context,rag["top_k"],rag["score_threshold"])
             break
         except Exception as e:
             if attempt == max_retries - 1:

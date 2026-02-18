@@ -101,7 +101,6 @@ def main():
         user_input = input("You: ")
         if user_input.lower() == 'quit':
             break
-        
         conversation.append({"role": "user", "content": user_input})
         while True:
             max_retries = 3
@@ -126,7 +125,6 @@ def main():
                 "content": ai_reply.content or "",
                 "tool_calls": [tc.to_dict() for tc in ai_reply.tool_calls],
             })
-
             # New path: execute all tool calls through executor bridge.
             bridge_ok, bridge_payload = run_executor_bridge(ai_reply.tool_calls, collection)
             print(ai_reply.tool_calls)
@@ -145,7 +143,6 @@ def main():
                 continue
             else:
                 print(bridge_payload)
-
             for tool_call in ai_reply.tool_calls:
                 tool_name = tool_call.function.name
                 tool_func = TOOL_REGISTRY.get(tool_name)

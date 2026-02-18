@@ -1,3 +1,32 @@
 {
-  "k": "v"
+  "session_id": "s1",
+  "create_at": "2026-02-17T14:35:13.035553",
+  "turn_count": 2,
+  "error_count": 1,
+  "turn_logs": [
+    {
+      "timestamp": "2026-02-17T14:35:13.035585",
+      "turn_id": 1,
+      "user_input": "u",
+      "assistant_output": "a",
+      "tool_events": [
+        {
+          "ok": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "timestamp": "2026-02-17T14:35:13.035607",
+      "turn_id": 2,
+      "user_input": "u2",
+      "assistant_output": "a2",
+      "tool_events": [
+        {
+          "ok": false
+        }
+      ],
+      "error": null
+    }
+  ]
 }

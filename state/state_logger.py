@@ -1,6 +1,7 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 import json
 from datetime import datetime
+from pathlib import Path
 from config.config_loader import config
 def init_session_state(session_id: str) -> Dict[str, Any]:
     session_state = {
@@ -13,26 +14,28 @@ def init_session_state(session_id: str) -> Dict[str, Any]:
     return session_state
 
 
-def log_turn(
-    session_state: Dict[str, Any],
-    turn_id: int,
-    user_input: str,
-    assistant_output: str,
-    tool_events: List[Dict[str, Any]],
-    error: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    turn_log ={
-        "session_state" : session_state,
-        "turn_id" : turn_id,
-        "user_input" : user_input,
-        "assistant_output" : assistant_output,
-        "tool_events" : tool_events,
-        "error" : error
+def log_turn(session_state: Dict[str, Any], turn_result: Dict[str, Any]) -> Dict[str, Any]:
+    turn_log = {
+        "timestamp": datetime.now().isoformat(),
+        "turn_id": turn_result.get("turn_id"),
+        "user_input": turn_result.get("user_input", ""),
+        "assistant_output": turn_result.get("assistant_output", ""),
+        "tool_events": turn_result.get("tool_events", []),
+        "error": turn_result.get("error"),
     }
+    session_state.setdefault("turn_logs", []).append(turn_log)
+    session_state["turn_count"] = session_state.get("turn_count", 0) + 1
+
+    has_tool_error = any(
+        isinstance(event, dict) and (event.get("ok") is False)
+        for event in turn_log["tool_events"]
+    )
+    if turn_log["error"] is not None or has_tool_error:
+        session_state["error_count"] = session_state.get("error_count", 0) + 1
     return turn_log
 def flush_state(session_state: Dict[str, Any]) -> None:
     jsonw = json.dumps(session_state,ensure_ascii=False,indent=2)
-    with open(config["paths"]["record_file"],"w",encoding="utf-8") as f:
+    record_path = Path(config["paths"]["record_file"])
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(record_path,"w",encoding="utf-8") as f:
         f.write(jsonw)
-    pass
-

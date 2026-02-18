@@ -6,6 +6,7 @@ embedding:
 rag:
   top_k: 2
   score_threshold: 0.3
+  collection_name: "default"
 db:
   path: "fault_history.db"
 llm:

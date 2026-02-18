@@ -21,14 +21,14 @@ def get_embedding_model():
     if _embedding_model is not None:
         return _embedding_model
     else:
-        embedding_model = config["embedding"]
-        cache_dir_cfg = embedding_model.get("cache_dir", ".hf_cache")
+        embedding_config = config["embedding"]
+        cache_dir_cfg = embedding_config.get("cache_dir", ".hf_cache")
         cache_dir = Path(cache_dir_cfg)
         if not cache_dir.is_absolute():
             cache_dir = (Path(__file__).resolve().parent.parent / cache_dir).resolve()
         cache_dir.mkdir(parents=True, exist_ok=True)
         _embedding_model = SentenceTransformer(
-            embedding_model["model_name"], 
+            embedding_config["model_name"], 
             cache_folder=cache_dir
         )
         return _embedding_model
@@ -61,7 +61,8 @@ def search_knowledge(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,
     return make_result(True, "S_RAG_QUERY", "查询到ChromaDB", result, (time.perf_counter() - start) * 1000)
 def query_fault_history(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
     start = time.perf_counter()
-    conn = sqlite3.connect('fault_history.db')
+    db_path = config["db"]["path"]
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     params = ()
     equipment_id = action["equipment_id"]

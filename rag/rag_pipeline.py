@@ -10,10 +10,10 @@ def load_and_chunk_document(filepath: str) -> List[str]:
     return chunks
 
 def index_documents(chunks: List[str], context: Dict[str, Any]) :
-    model = context["model"]
+    embedding_model = context["embedding_model"]
     collection = context["collection"]
     for i, chunk in enumerate(chunks):
-        embedding = model.encode(chunk).tolist()
+        embedding = embedding_model.encode(chunk).tolist()
         collection.add(
             ids=[f"doc_{i}"],
             embeddings=[embedding],
@@ -27,8 +27,9 @@ def retrieve_context(
     top_k: int,
     score_threshold: float,
 ) -> List[Dict[str, Any]]:
-    model = context["model"]
-    query_embedding = model.encode(query).tolist()
+    
+    embedding_model = context["embedding_model"]
+    query_embedding = embedding_model.encode(query).tolist()
     collection = context["collection"]
     results = collection.query(
                 query_embeddings=[query_embedding],
@@ -36,6 +37,8 @@ def retrieve_context(
     )
     distances = results.get("distances",[[]])[0]
     documents = results.get("documents", [[]])[0]
+    if not distances:
+        return []
     d_min = min(distances)
     d_max = max(distances)
     eps = 1e-8
@@ -47,4 +50,3 @@ def retrieve_context(
                                     ,"score":norm})
     final_result = sorted(final_result,reverse=True,key=lambda x: x["score"])
     return final_result
-

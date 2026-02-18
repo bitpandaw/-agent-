@@ -19,16 +19,18 @@ def plan_actions(
 ) -> List[Dict[str, Any]]:
     actions=[]
     for action in tools_schema:
+        if not isinstance(action,dict):
+            continue
         tool_name = action.get("tool_name")
         tool_args = action.get("tool_args",{})
         tool_call_id = action.get("tool_call_id")
-        if not tool_name:
+        if not isinstance(tool_args,dict):
+            tool_args = {}
+        if tool_name == "query_fault_history":
+            tool_args.setdefault("equipment_id", None)
+            tool_args.setdefault("fault_type", None)
+        if not tool_name: 
             continue
-        elif tool_name == "query_fault_history":
-            if not tool_args["equipment_id"]:
-                tool_args["equipment_id"]=None
-            if not tool_args["fault_type"]:
-                tool_args["fault_type"]=None
         actions.append({"tool_name":tool_name,"tool_args":tool_args,"tool_call_id":tool_call_id})
     return actions
 

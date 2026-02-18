@@ -37,7 +37,7 @@ def run_executor_bridge(tool_calls, collection):
 
     context = {"collection": collection}
     if needs_embedding_model:
-        context["model"] = get_embedding_model()
+        context["embedding_model"] = get_embedding_model()
 
     try:
         tool_events = execute_actions(plan_actions, TOOL_REGISTRY, context)
@@ -55,7 +55,7 @@ def call_tool(tool_func,tool_args,collection):
     params = sig.parameters
     tool_name = tool_func.__name__
     if tool_name == "search_knowledge":
-        context["model"] = get_embedding_model()
+        context["embedding_model"] = get_embedding_model()
     elif tool_name == "query_fault_history":
         action.setdefault("equipment_id", None)
         action.setdefault("fault_type", None)
@@ -75,9 +75,9 @@ def load_and_chunk_document(filepath):
 # Step 2: 把文档块存入ChromaDB
 def index_documents(chunks):
     """为文档块生成embedding并存入向量数据库"""
-    model = get_embedding_model()
+    embedding_model = get_embedding_model()
     for i, chunk in enumerate(chunks):
-        embedding = model.encode(chunk).tolist()
+        embedding = embedding_model.encode(chunk).tolist()
         collection.add(
             ids=[f"doc_{i}"],
             embeddings=[embedding],

@@ -1,14 +1,22 @@
+import sys
+from pathlib import Path
 from typing import Any, Dict, List
+if __package__ is None or __package__ == "":
+    project_root = Path(__file__).resolve().parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 from config.config_loader import config
 from openai import OpenAI
 import state.state_logger as state_logger
 import chromadb,os,uuid,time,json
-from tools.tool_registry import TOOL_REGISTRY
+from tools.tool_registry import TOOL_REGISTRY,get_embedding_model
 from tools.tools_json import TOOLS_LIST
 from planner.planner import build_turn_input,plan_actions
 from executor.executor import execute_actions
+from rag.rag_pipeline import index_documents,load_and_chunk_document
 def initialize_runtime(config: Dict[str, Any]) -> Dict[str, Any]:
     chroma_client = chromadb.Client()
+    embedding_model = get_embedding_model()
     context = {
         "client": OpenAI(
                 api_key= os.environ.get(config["llm"]["api_key_env"]),
@@ -20,11 +28,9 @@ def initialize_runtime(config: Dict[str, Any]) -> Dict[str, Any]:
             {"role": "system", "content": "你是一个工业设备故障诊断专家。当用户提问时，使用search_knowledge工具从手册中检索相关信息，然后基于检索到的内容给出专业建议。"}
         ],
         "tool_registry":TOOL_REGISTRY,
-        "embedding_model":None
+        "embedding_model":embedding_model
     }
     return context
-
-
 def run_turn(
     user_input: str,
     context: Dict[str, Any],
@@ -105,6 +111,12 @@ def main() -> None:
     context = initialize_runtime(config)
     session_id = uuid.uuid4().hex
     session_state = state_logger.init_session_state(session_id)
+    print("正在加载知识库...")
+    filepath = config["paths"]["knowledge_file"]
+    chunks = load_and_chunk_document(filepath)
+    index_documents(chunks,context)
+    print("\n=== RAG驱动的设备诊断助手 ===")
+    print("(输入 'quit' 退出)\n")
     while True:
         user_input = input("You:")
         if(user_input =='quit'):
@@ -115,4 +127,3 @@ def main() -> None:
         state_logger.log_turn(session_state,turn_result)
 if __name__ == "__main__":
     main()
-

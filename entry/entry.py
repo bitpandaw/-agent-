@@ -8,7 +8,7 @@ if __package__ is None or __package__ == "":
 from config.config_loader import config
 from openai import OpenAI
 import state.state_logger as state_logger
-import chromadb,os,uuid,time,json
+import chromadb,os,uuid,time
 from tools.tool_registry import TOOL_REGISTRY,get_embedding_model
 from tools.tools_json import TOOLS_LIST
 from planner.planner import build_turn_input,plan_actions
@@ -36,6 +36,7 @@ def run_turn(
     context: Dict[str, Any],
     session_state:Dict[str, Any]
 ) -> Dict[str, Any]:
+    client = context['client']
     conversation = context["conversation"]
     conversation.append(
         {"role": "user", "content": user_input}
@@ -67,6 +68,7 @@ def run_turn(
                     "name":tool_event["tool_name"],
                     "tool_call_id":actions[idx]["tool_call_id"]
                 })
+        
         response = client.chat.completions.create(
                 model=context["config"]["llm"]["model"],
                 messages=conversation,

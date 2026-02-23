@@ -1,4 +1,4 @@
-﻿# tool_registry.py
+# tool_registry.py
 from sentence_transformers import SentenceTransformer
 import sqlite3,time
 from config.config_loader import config
@@ -61,7 +61,7 @@ def search_knowledge(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,
     return make_result(True, "S_RAG_QUERY", "查询到ChromaDB", result, (time.perf_counter() - start) * 1000)
 def query_fault_history(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
     start = time.perf_counter()
-    db_path = config["db"]["path"]
+    db_path = config["paths"]["db"]
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     params = ()

@@ -40,52 +40,33 @@ def run_turn(
     conversation.append(
         {"role": "user", "content": user_input}
     )
-    max_retries = 3
     turn_input = build_turn_input(
         session_state["session_id"],
         session_state["turn_count"] + 1,
-        user_input,
-        conversation
+        user_input
     )
-    for attempt in range(max_retries):
-        try:
-            client = context['client']
-            response = client.chat.completions.create(
-                model=context["config"]["llm"]["model"],
-                messages=conversation,
-                tools=TOOLS_LIST
-            )
-            break
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise Exception(f"与client连接失败,错误原因:{e}")
-            time.sleep(10)
-    ai_reply = response.choices[0].message
-    if not ai_reply.tool_calls:
-        conversation.append({
-                "role": "assistant",
-                "content": ai_reply.content,
-            }
-        )
+    plan_actions_results = plan_actions(turn_input,context)
+    actions = plan_actions_results["actions"]
+    last_msg = context["conversation"][-1]
+    assistant_output = last_msg.get("content", "")
+    if  not actions:
         tool_events = []
+        turn_result = {
+            "turn_id":session_state["turn_count"] + 1,
+            "user_input":user_input,
+            "assistant_output":assistant_output,
+            "tool_events":tool_events,
+            "error":None
+        }
     else:
-        conversation.append({
-            "role": "assistant",
-            "content": ai_reply.content or "",
-            "tool_calls":[tc.to_dict() for tc in ai_reply.tool_calls] ,
-        })
-        tools_schema = [{"tool_name": tc.function.name,"tool_args" : json.loads(tc.function.arguments),"tool_call_id" : tc.id }for tc in ai_reply.tool_calls]
-        plan_actions_results = plan_actions(turn_input,tools_schema,client)
-        tool_events = execute_actions(plan_actions_results,context["tool_registry"],context)
-        for idx, tool_event in enumerate(tool_events):
-            conversation.append({
-                "role": "tool",
-                "content":str(tool_event),
-                "name":tool_event["tool_name"],
-                "tool_call_id":plan_actions_results[idx]["tool_call_id"]
-                }
-            )
-        client = context['client']
+        tool_events = execute_actions(actions,context["tool_registry"],context)
+        for idx,tool_event in enumerate(tool_events):
+                conversation.append({
+                    "role": "tool",
+                    "content":str(tool_event),
+                    "name":tool_event["tool_name"],
+                    "tool_call_id":actions[idx]["tool_call_id"]
+                })
         response = client.chat.completions.create(
                 model=context["config"]["llm"]["model"],
                 messages=conversation,
@@ -97,13 +78,13 @@ def run_turn(
                 "content": ai_reply.content,
             }
         )
-    turn_result = {
-        "turn_id":session_state["turn_count"] + 1,
-        "user_input":user_input,
-        "assistant_output":ai_reply.content,
-        "tool_events":tool_events,
-        "error":None
-    }
+        turn_result = {
+            "turn_id":session_state["turn_count"] + 1,
+            "user_input":user_input,
+            "assistant_output":ai_reply.content,
+            "tool_events":tool_events,
+            "error":None
+        }
     return turn_result
 
 

@@ -1,11 +1,11 @@
-# ARCHITECTURE
+# 架构文档
 
-## 1. Scope & Goal
+## 1. 范围与目标
 - 今日目标：把单文件可运行原型整理为可扩展工程骨架，保证功能不回退。
 - 当前系统定位：工业设备故障诊断 Agent（LLM + RAG + SQL 工具）。
 - 非目标：不在 Day1 追求性能优化、复杂调度策略、完整监控平台。
 
-## 2. System Overview
+## 2. 系统概览
 - 主入口：`rag_system.py`
 - 工具注册与实现：`tools/tool_registry.py`
 - 工具 schema：`tools/tools_json.py`
@@ -15,7 +15,7 @@
 - 知识库文本：`equipment_knowledge.txt`
 - 历史故障库：`fault_history.db`
 
-## 3. Module Contracts
+## 3. 模块契约
 
 | Module        | 职责                                   | 输入                                     | 输出                                              | 依赖                                     | 失败处理                                 | 当前代码映射                                                 |
 | ------------- | -------------------------------------- | ---------------------------------------- | ------------------------------------------------- | ---------------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
@@ -26,7 +26,7 @@
 | rag           | 文档分块、索引、向量检索、阈值策略     | query、knowledge chunks、RAG配置         | 检索文档列表或空结果                              | embedding model、collection、config.rag  | 检索失败返回错误；无命中返回空           | `rag_system.py` `load_and_chunk_document/index_documents` + `tool_registry.py::search_knowledge` |
 | state/logging | 记录会话与故障排查信息                 | 每轮输入输出、工具执行事件、错误         | 可回放状态与调试日志                              | 内存会话、stdout（当前）                 | 日志失败不阻塞主流程                     | 当前以 `conversation` 内存列表与 `print` 为主                |
 
-## 4. Data Contracts
+## 4. 数据契约
 
 ### 4.1 TurnInput
 - `session_id`: string
@@ -54,7 +54,7 @@
 - `error`: object or null
 - `timestamp`: string
 
-## 5. End-to-End Flow
+## 5. 端到端流程
 1. entry 读取配置并初始化 LLM client、Chroma collection。
 2. entry 加载知识库文本并建立/更新向量索引。
 3. entry 接收用户输入，组装 `TurnInput`。
@@ -64,7 +64,7 @@
 7. planner（LLM）基于工具结果生成最终回复。
 8. entry 输出回复并记录 state/logging。
 
-## 6. Failure Paths
+## 6. 失败路径
 
 | 场景                  | 触发点                              | code               | 用户可见信息                              | 重试策略               | state记录                                           |
 | --------------------- | ----------------------------------- | ------------------ | ----------------------------------------- | ---------------------- | --------------------------------------------------- |
@@ -76,25 +76,25 @@
 | RAG 无命中            | 检索结果为空                        | `E_RAG_EMPTY`      | 未检索到相关知识                          | 不重试，返回空结果分支 | `stage=rag`, `query`, `top_k`, `threshold`          |
 | SQL 查询失败          | `query_fault_history` 执行 SQL 异常 | `E_SQL_QUERY`      | 故障历史查询失败                          | 不重试                 | `stage=tool_sql`, `sql`, `error`                    |
 
-## 7. Tool Contract Policy
+## 7. 工具契约规范
 - 目标策略：所有工具统一返回 `ToolResult` 结构。
 - 当前状态：工具仍有字符串返回，主循环依赖 `str(result)`。
 - Day1 要求：主循环只处理统一结构，不做工具特判。
 
-## 8. Scalability Rationale (toward 100 tools)
+## 8. 可扩展性说明（面向百工具规模）
 - 工具扩展通过注册表完成，避免在主流程堆叠 if-else。
 - planner 只产出 `PlanAction`，executor 只消费 `PlanAction`，职责解耦。
 - 新增工具的变更面可控制在 `tools_json + tool_registry`，主编排不改。
 - 统一 `ToolResult` 让失败语义、日志、回归测试可标准化。
 - 模块边界清晰后，可逐步替换任一层实现而不影响全链路。
 
-## 9. Known Gaps (Current Code vs Target)
+## 9. 已知差距（当前代码 vs 目标）
 - `rag_system.py` 仍包含部分 RAG 细节（分块/索引）与 executor 细节。
 - `score_threshold` 已在配置中存在，但尚未实质参与检索过滤。
 - state/logging 目前主要是内存 `conversation` 与控制台输出，缺持久化。
 - 工具返回结构尚未完全统一为 `ToolResult`。
 
-## 10. Verification Checklist
+## 10. 验收清单
 - [ ] `Module Contracts` 六模块均有职责、输入、输出、依赖、失败处理、代码映射。
 - [ ] `Data Contracts` 已定义 `TurnInput/PlanAction/ToolResult/TurnState`。
 - [ ] `Failure Paths` 至少覆盖 5 个高频故障场景并包含 `code + state记录`。

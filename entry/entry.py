@@ -10,10 +10,9 @@ from openai import OpenAI
 import state.state_logger as state_logger
 import chromadb,os,uuid,time
 from tools.tool_registry import TOOL_REGISTRY,get_embedding_model
-from tools.tools_json import TOOLS_LIST
-from planner.planner import build_turn_input,plan_actions
-from executor.executor import execute_actions
 from rag.rag_pipeline import index_documents,load_and_chunk_document
+from orchestrator.orchestrator import run_orchestrator
+from planner.planner import build_turn_input
 def initialize_runtime(config: Dict[str, Any]) -> Dict[str, Any]:
     chroma_client = chromadb.Client()
     embedding_model = get_embedding_model()
@@ -36,7 +35,6 @@ def run_turn(
     context: Dict[str, Any],
     session_state:Dict[str, Any]
 ) -> Dict[str, Any]:
-    client = context['client']
     conversation = context["conversation"]
     conversation.append(
         {"role": "user", "content": user_input}
@@ -46,47 +44,7 @@ def run_turn(
         session_state["turn_count"] + 1,
         user_input
     )
-    plan_actions_results = plan_actions(turn_input,context)
-    actions = plan_actions_results["actions"]
-    last_msg = context["conversation"][-1]
-    assistant_output = last_msg.get("content", "")
-    if  not actions:
-        tool_events = []
-        turn_result = {
-            "turn_id":session_state["turn_count"] + 1,
-            "user_input":user_input,
-            "assistant_output":assistant_output,
-            "tool_events":tool_events,
-            "error":None
-        }
-    else:
-        tool_events = execute_actions(actions,context["tool_registry"],context)
-        for idx,tool_event in enumerate(tool_events):
-                conversation.append({
-                    "role": "tool",
-                    "content":str(tool_event),
-                    "name":tool_event["tool_name"],
-                    "tool_call_id":actions[idx]["tool_call_id"]
-                })
-        
-        response = client.chat.completions.create(
-                model=context["config"]["llm"]["model"],
-                messages=conversation,
-                tools=TOOLS_LIST
-        )
-        ai_reply = response.choices[0].message
-        conversation.append({
-                "role": "assistant",
-                "content": ai_reply.content,
-            }
-        )
-        turn_result = {
-            "turn_id":session_state["turn_count"] + 1,
-            "user_input":user_input,
-            "assistant_output":ai_reply.content,
-            "tool_events":tool_events,
-            "error":None
-        }
+    turn_result = run_orchestrator(turn_input,context)
     return turn_result
 
 

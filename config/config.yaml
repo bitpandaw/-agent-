@@ -13,6 +13,7 @@ llm:
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
   api_key_env: "DEEPSEEK_API_KEY"
+  system_prompt: "你是一个工业设备故障诊断专家。当用户提问时，使用search_knowledge工具从手册中检索相关信息，然后基于检索到的内容给出专业建议。"
 paths:
   db: "fault_history.db"
   knowledge_file: "equipment_knowledge.txt"

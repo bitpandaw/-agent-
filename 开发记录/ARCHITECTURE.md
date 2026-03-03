@@ -28,6 +28,17 @@
 
 ## 4. 数据契约
 
+### 4.0 Runtime / Session / TurnContext（Gateway 多会话）
+
+| 概念 | 含义 |
+|------|------|
+| Runtime | 共享运行时：client, config, collection, embedding_model, tool_registry |
+| Session | 会话：session_state, messages, lock（每会话独立） |
+| messages | 对话历史 [system, user, assistant, tool, ...] |
+| TurnContext | 单次请求上下文 = Runtime + {conversation: session.messages} |
+
+详见 `docs/DATAFLOW_TO_DISTRIBUTED_MAPPING.md` 第六节。
+
 ### 4.1 TurnInput
 - `session_id`: string
 - `turn_id`: integer

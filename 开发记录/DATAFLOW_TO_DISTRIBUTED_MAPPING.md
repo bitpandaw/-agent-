@@ -169,16 +169,53 @@ HTTP POST /chat
 
 ---
 
-## 六、Context 与模块间传递
+## 六、Runtime / Session / TurnContext 解耦设计
 
-| 原 context 键 | 分布式归属 |
-|---------------|------------|
-| client | Planner |
-| config | 各服务环境变量 |
-| collection | RAG |
-| conversation | Orchestrator（或共享存储） |
-| tool_registry | Executor（search_knowledge 改为 HTTP 客户端）|
-| embedding_model | RAG 或 Embedding |
+### 6.1 概念定义
+
+| 概念 | 本质 | 存放内容 | 归属 |
+|------|------|----------|------|
+| **Runtime** | 共享运行时 | client, config, collection, embedding_model, tool_registry | 进程级，启动时创建一次 |
+| **Session** | 会话状态 | session_state, messages, lock | 每会话独立一份 |
+| **messages** | 对话历史 | [system, user, assistant, tool, ...] | 每会话一份 |
+| **TurnContext** | 单次请求上下文 | Runtime + messages | 每次请求临时组装，用完即弃 |
+
+### 6.2 解耦原则
+
+- **Runtime 无会话**：不含 session_id、conversation
+- **Session 无基础设施**：不含 client、collection 等
+- **TurnContext 临时**：不持久化，每次请求组装
+
+### 6.3 数据流
+
+```
+启动: runtime = init_runtime()   # 不含 conversation
+
+创建 Session:
+  session = {
+      session_state: {...},
+      messages: [system_prompt],
+      lock: Lock()
+  }
+
+每次 /chat:
+  session = store.get_or_create(session_id)
+  turn_context = {**runtime, "conversation": session["messages"]}
+  turn_result = run_turn(message, turn_context, session["session_state"])
+  # run_turn 内部 append 到 turn_context["conversation"]，
+  # 即 session["messages"]（同一引用），自动更新
+```
+
+### 6.4 原 context 与归属
+
+| 原 context 键 | 归属 | 说明 |
+|---------------|------|------|
+| client | Runtime | Planner 用 |
+| config | Runtime | 各服务环境变量 |
+| collection | Runtime | RAG 用 |
+| tool_registry | Runtime | Executor 用 |
+| embedding_model | Runtime | RAG 或 Embedding |
+| conversation | Session.messages | 每会话独立 |
 
 ---
 

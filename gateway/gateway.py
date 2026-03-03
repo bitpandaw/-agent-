@@ -1,73 +1,56 @@
-import sys
-from pathlib import Path
-from typing import Any, Dict, List
-if __package__ is None or __package__ == "":
-    project_root = Path(__file__).resolve().parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
+import uuid
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+
 from config.config_loader import config
-from openai import OpenAI
+from gateway.agent import initialize_runtime, load_knowledge_base, run_turn
+from gateway.SessionStore import SessionStore
 import state.state_logger as state_logger
-import chromadb,os,uuid,time
-from tools.tool_registry import TOOL_REGISTRY,get_embedding_model
-from rag.rag_pipeline import index_documents,load_and_chunk_document
-from orchestrator.orchestrator import run_orchestrator
-from planner.planner import build_turn_input
-def initialize_runtime(config: Dict[str, Any]) -> Dict[str, Any]:
-    chroma_client = chromadb.Client()
-    embedding_model = get_embedding_model()
-    context = {
-        "client": OpenAI(
-                api_key= os.environ.get(config["llm"]["api_key_env"]),
-                base_url = config["llm"]["base_url"]
-            ),
-        "config":config,
-        "collection": chroma_client.get_or_create_collection(
-            name=config["rag"]["collection_name"],
-            metadata={"hnsw:space": config["rag"].get("distance", "l2")},
-        ),
-        "conversation": [
-            {"role": "system", "content": "你是一个工业设备故障诊断专家。当用户提问时，使用search_knowledge工具从手册中检索相关信息，然后基于检索到的内容给出专业建议。"}
-        ],
-        "tool_registry":TOOL_REGISTRY,
-        "embedding_model":embedding_model
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    session_id: str
+    turn_id: int
+
+
+app = FastAPI()
+
+
+@app.on_event("startup")
+def startup_event():
+    print("正在努力启动中......")
+    global session_store
+    app.state.runtime = initialize_runtime(config)
+    load_knowledge_base(config, app.state.runtime)
+    session_store = SessionStore(config["llm"]["system_prompt"])
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(request: ChatRequest):
+    session_id = request.session_id or str(uuid.uuid4())
+    runtime = request.app.state.runtime
+    session = session_store.get_or_create(session_id)
+    turn_context = {
+        **runtime,
+        "conversation": session["conversation"],
     }
-    return context
-def run_turn(
-    user_input: str,
-    context: Dict[str, Any],
-    session_state:Dict[str, Any]
-) -> Dict[str, Any]:
-    conversation = context["conversation"]
-    conversation.append(
-        {"role": "user", "content": user_input}
+    with session["lock"]:
+        turn_result = run_turn(request.message, turn_context, session["session_state"])
+        state_logger.log_turn(session["session_state"], turn_result)
+    return ChatResponse(
+        reply=turn_result["assistant_output"],
+        session_id=session_id,
+        turn_id=turn_result["turn_id"],
     )
-    turn_input = build_turn_input(
-        session_state["session_id"],
-        session_state["turn_count"] + 1,
-        user_input
-    )
-    turn_result = run_orchestrator(turn_input,context)
-    return turn_result
-
-
-def main() -> None:
-    context = initialize_runtime(config)
-    session_id = uuid.uuid4().hex
-    session_state = state_logger.init_session_state(session_id)
-    print("正在加载知识库...")
-    filepath = config["paths"]["knowledge_file"]
-    chunks = load_and_chunk_document(filepath)
-    index_documents(chunks,context)
-    print("\n=== RAG驱动的设备诊断助手 ===")
-    print("(输入 'quit' 退出)\n")
-    while True:
-        user_input = input("You:")
-        if(user_input =='quit'):
-            state_logger.flush_state(session_state)
-            break
-        turn_result = run_turn(user_input,context,session_state)
-        print(turn_result["assistant_output"])
-        state_logger.log_turn(session_state,turn_result)
-if __name__ == "__main__":
-    main()

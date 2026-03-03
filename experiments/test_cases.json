@@ -15,12 +15,12 @@
         {"id": "fuzzy_2", "query": "NCK温度过高", "expected_doc_id": "doc_6", "category": "fuzzy"},
         {"id": "fuzzy_3", "query": "急停怎么排除", "expected_doc_id": "doc_9", "category": "fuzzy"},
         {"id": "fuzzy_4", "query": "重新启动推迟", "expected_doc_id": "doc_8", "category": "fuzzy"},
-        {"id": "fuzzy_5", "query": "系统电池电量不足", "expected_doc_id": "doc_93", "category": "fuzzy"},
+        {"id": "fuzzy_5", "query": "电源故障后上电数据恢复", "expected_doc_id": "doc_540", "category": "fuzzy"},
         {"id": "boundary_1", "query": "坐标轴分配存在间隔", "expected_doc_id": "doc_10", "category": "boundary"},
         {"id": "boundary_2", "query": "机床数据轴分配", "expected_doc_id": "doc_10", "category": "boundary"},
-        {"id": "boundary_3", "query": "808D数据备份", "expected_doc_id": "doc_642", "category": "boundary"},
-        {"id": "boundary_4", "query": "驱动报警", "expected_doc_id": "doc_1684", "category": "boundary"},
-        {"id": "boundary_5", "query": "SINAMICS V70故障", "expected_doc_id": "doc_950", "category": "boundary"}
+        {"id": "boundary_3", "query": "4062 备份数据装载", "expected_doc_id": "doc_29", "category": "boundary"},
+        {"id": "boundary_4", "query": "380502 PROFIBUS总线配置已更改", "expected_doc_id": "doc_1684", "category": "boundary"},
+        {"id": "boundary_5", "query": "26026 SINAMICS 驱动参数 P2038", "expected_doc_id": "doc_925", "category": "boundary"}
       ]
     },
     "sql_query": {"description": "测试历史故障记录查询", "cases": []},

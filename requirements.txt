@@ -1,0 +1,9 @@
+# API 服务
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# 项目已有依赖
+chromadb>=0.4.0
+openai>=1.0.0
+sentence-transformers>=2.2.0
+pyyaml>=6.0

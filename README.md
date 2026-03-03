@@ -1,48 +1,58 @@
-# 工业设备故障诊断Agent系统
+# 工业设备故障诊断 Agent 系统
+
+RAG + LLM + 多工具的故障诊断对话系统，基于 SINUMERIK 808D 诊断手册。
 
 ## 快速开始
 
-1. 安装依赖
-2. 在config.yaml中配置环境：
-  - embedding model
-  - llm
-  - rag
-  - db
-3. 初始化数据库：
-  - `python init_db.py`
-4. 启动程序：
-  - `python rag_system.py`
+```bash
+pip install -r requirements.txt
+# 编辑 config/config.yaml 配置 embedding、llm、rag、db
+python init_db.py
+uvicorn gateway.gateway:app --host 0.0.0.0 --port 8000
+```
+
+访问 `POST /chat` 进行对话，`GET /health` 健康检查。
 
 ## 主要文件
 
-- `rag_system.py`：主程序入口
-- `tools/`：工具定义与注册
-- `config/config.yaml`：配置文件
-- `equipment_knowledge.txt`：知识库文本（来源：SINUMERIK 808D ADVANCED 诊断手册，可通过 `scripts/extract_808d_manual.py` 从 PDF 重新生成）
-- `fault_history.db`：故障历史数据库
+| 路径 | 说明 |
+|------|------|
+| `gateway/gateway.py` | FastAPI 入口，`/chat`、`/health` |
+| `gateway/agent.py` | 核心逻辑：run_turn、load_knowledge_base |
+| `tools/` | 工具注册与定义 |
+| `rag/` | RAG 检索与索引 |
+| `config/config.yaml` | 统一配置 |
+| `equipment_knowledge.txt` | 知识库（808D 诊断手册，可由 `scripts/extract_808d_manual.py` 从 PDF 生成） |
 
 ## 项目背景
 
-为准备研究生复试，独立自主完成此次项目
+为准备研究生复试，独立完成。技术选型：DeepSeek + MiniLM + ChromaDB + SQLite，轻量易部署。
 
 ## 开发过程
 
-### 已解决的主要问题
+### **单文件跑通**
 
-1. **工具可扩展性**：一开始在rag_system.py中使用if-else判断分支使用工具，加到第三个工具觉得太麻烦。和claude讨论后决定新开一个tool moudle，用于存储工具注册表。后面遇到了传参的问题（ChromaDB的collection无法解耦合)，发现这个问题后我决定tool_registry中使用*lambda*函数以对函数进行参数注入，后面发现还是太麻烦，于是决定用在rag_system.py设置一个通用接口
-2. **可移植性问题**：开发过程中由于openaikey太贵，导致我不得不使用deepseekapi，由于deepseek没有embedding模型，我使用了轻量级开源模型MiniLM，开发过程中考虑到用户可能使用的不是deepseek，而是claude，chatgpt，这时配置可能导致太麻烦，于是我单开了一个config模块用于统一配置，减少硬编码。在开发过程中遇到了不同模块下的路径不同可能导致重新下载MiniLM的问题，于是我统一在tool_registry.py设置了一个get_embedding_model函数，并在里面设置了global embedding_model，通过在单一模块得到模块的位置来避免这个问题
-3. **向量检索质量**：发现用户提问越具体，检索效果越好。
-4. **模块重构**:由于初始的rag_sytem将多个功能融合到一个模块里，导致后续项目无法正常拓展，通过交流编排数据流后，将原本一个模块划分为多个功能上独立，数据流单元清晰的模块。后续也发现了entry模块执行了大部分的planner模块，重构后得以解决
-5. **设计文档和实际模块功能未对齐Z**:实际开发中我并没有完全按照设计文档对齐，后续修复了这个点（除了history和context
+一开始就是个大文件，RAG、工具调用、LLM 对话都堆在一起，工具用 if-else 分支，加到第三个就不想写了。先把能跑的版本写出来，再考虑拆分。
 
-### 正在解决的问题
+### **工具解耦与模块拆分**
 
-1. **RAG 分块过于粗糙**:rag的文件检索质量严重受到文档的约束，并没有考虑到真实工业场景下的数据
-2. **数据来源不是真实的工业数据**:真实的工业数据需要用到数据清洗技术，目前并没有找到真实的数据来源
+工具抽到 tool_registry，遇到 ChromaDB collection 传参问题，试过 lambda 注入，最后在入口做了通用接口。同时抽了 config，因为换 DeepSeek 和 MiniLM 后要统一读配置。接着按数据流拆成 entry / planner / executor / rag，并处理了 embedding 分数尺度不一致，做了归一化，顺带加了 state 模块。
+
+### **架构修整与 ReAct**
+
+把 entry 里 planner 的活拆出去，和设计文档对齐，修了解耦带来的 bug。之后上了 ReAct 风格推理，知识库换成 808D 诊断手册，做了归一化对比实验。
+
+### **REST 入口**
+
+加了 Gateway，FastAPI 暴露 /chat，SessionStore 做会话级 context，支持多会话，核心逻辑迁到 agent 模块。
+
+### **待优化**
+
+- RAG 分块策略仍较粗糙
+- 数据来源是手册，非真实工业数据
 
 ### 技术选型理由
 
 - DeepSeek：选用轻量级本地模型以支持离线部署，降低端侧推理依赖。
 - ChromaDB：轻量级本地向量库，适合原型开发
 - SQLite：单文件数据库，易于部署演示
-

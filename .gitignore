@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+.hf_cache/
+chroma_db/
+*.db
+.env

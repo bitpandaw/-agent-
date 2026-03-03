@@ -1,22 +1,30 @@
 {
-  "test_suite_version": "v1.0",
-  "created_date": "2025-02-13",
+  "test_suite_version": "v2.0",
+  "created_date": "2025-03-02",
+  "description": "RAG检索归一化对比实验（基于 SINUMERIK 808D 诊断手册）",
   "categories": {
     "rag_retrieval": {
-      "description": "测试RAG知识库检索能力",
-      "cases": []
+      "description": "测试 808D 诊断手册检索能力",
+      "cases": [
+        {"id": "exact_1", "query": "报警2000 PLC运行信息监控", "expected_doc_id": "doc_4", "category": "exact"},
+        {"id": "exact_2", "query": "报警2001 PLC没启动", "expected_doc_id": "doc_5", "category": "exact"},
+        {"id": "exact_3", "query": "报警2110 NCK温度报警", "expected_doc_id": "doc_6", "category": "exact"},
+        {"id": "exact_4", "query": "报警3000 急停", "expected_doc_id": "doc_9", "category": "exact"},
+        {"id": "exact_5", "query": "报警2140 SRAM清除", "expected_doc_id": "doc_7", "category": "exact"},
+        {"id": "fuzzy_1", "query": "PLC没启动怎么办", "expected_doc_id": "doc_5", "category": "fuzzy"},
+        {"id": "fuzzy_2", "query": "NCK温度过高", "expected_doc_id": "doc_6", "category": "fuzzy"},
+        {"id": "fuzzy_3", "query": "急停怎么排除", "expected_doc_id": "doc_9", "category": "fuzzy"},
+        {"id": "fuzzy_4", "query": "重新启动推迟", "expected_doc_id": "doc_8", "category": "fuzzy"},
+        {"id": "fuzzy_5", "query": "系统电池电量不足", "expected_doc_id": "doc_93", "category": "fuzzy"},
+        {"id": "boundary_1", "query": "坐标轴分配存在间隔", "expected_doc_id": "doc_10", "category": "boundary"},
+        {"id": "boundary_2", "query": "机床数据轴分配", "expected_doc_id": "doc_10", "category": "boundary"},
+        {"id": "boundary_3", "query": "808D数据备份", "expected_doc_id": "doc_642", "category": "boundary"},
+        {"id": "boundary_4", "query": "驱动报警", "expected_doc_id": "doc_1684", "category": "boundary"},
+        {"id": "boundary_5", "query": "SINAMICS V70故障", "expected_doc_id": "doc_950", "category": "boundary"}
+      ]
     },
-    "sql_query": {
-      "description": "测试历史故障记录查询",
-      "cases": []
-    },
-    "calculator": {
-      "description": "测试计算工具",
-      "cases": []
-    },
-    "multi_tool": {
-      "description": "测试多工具协同",
-      "cases": []
-    }
+    "sql_query": {"description": "测试历史故障记录查询", "cases": []},
+    "calculator": {"description": "测试计算工具", "cases": []},
+    "multi_tool": {"description": "测试多工具协同", "cases": []}
   }
 }

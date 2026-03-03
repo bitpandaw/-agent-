@@ -4,9 +4,10 @@ embedding:
   cache_dir: ".hf_cache"
 
 rag:
-  top_k: 2
+  top_k: 4
   score_threshold: 0.3
   collection_name: "default"
+  distance: "cosine"  # l2 | cosine | ip
 llm:
   provider: "deepseek"
   model: "deepseek-chat"

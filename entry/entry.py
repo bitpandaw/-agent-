@@ -22,7 +22,10 @@ def initialize_runtime(config: Dict[str, Any]) -> Dict[str, Any]:
                 base_url = config["llm"]["base_url"]
             ),
         "config":config,
-        "collection":chroma_client.get_or_create_collection(name=config["rag"]["collection_name"]),
+        "collection": chroma_client.get_or_create_collection(
+            name=config["rag"]["collection_name"],
+            metadata={"hnsw:space": config["rag"].get("distance", "l2")},
+        ),
         "conversation": [
             {"role": "system", "content": "你是一个工业设备故障诊断专家。当用户提问时，使用search_knowledge工具从手册中检索相关信息，然后基于检索到的内容给出专业建议。"}
         ],

@@ -1,41 +1,58 @@
 from typing import Any, Dict, List
+from fastapi import FastAPI
+from config.config_loader import config
+import httpx,chromadb
+from sentence_transformers import SentenceTransformer
+from pydantic import BaseModel
 
+class RetrieveRequest(BaseModel):
+    query: str
 
-def load_and_chunk_document(filepath: str) -> List[str]:
+app = FastAPI()
+@app.on_event("startup")
+def startup_event() :
+    filepath:str =  config["paths"]["knowledge_file"]
+    app.state.embedding_model = SentenceTransformer(
+        config["embedding"]["model_name"],
+        cache_folder=config["embedding"].get("cache_dir", ".hf_cache")
+    )
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
-    
     # 简单分段：按空行分割
     chunks = [chunk.strip() for chunk in content.split('\n\n') if chunk.strip()]
-    return chunks
-
-def index_documents(chunks: List[str], context: Dict[str, Any]) :
-    embedding_model = context["embedding_model"]
-    collection = context["collection"]
+    chroma_client = chromadb.Client()
+    app.state.collection  = chroma_client.get_or_create_collection(
+        name=config["rag"]["collection_name"], 
+        metadata={"hnsw:space": config["rag"].get("distance", "l2")},
+    )
     for i, chunk in enumerate(chunks):
-        embedding = embedding_model.encode(chunk).tolist()
-        collection.add(
+        resp = httpx.post(
+            "http://embedding:8011/embed",
+            json = {
+                "texts":[chunk],
+            },
+            timeout=30,
+        )
+        vectors = resp.json()["vectors"]
+        app.state.collection.add(
             ids=[f"doc_{i}"],
-            embeddings=[embedding],
+            embeddings=vectors,
             documents=[chunk]
         )
+   
 
 
-def retrieve_context(
-    query: str,
-    context: Dict[str, Any],
-    top_k: int,
-    score_threshold: float,
-) -> List[Dict[str, Any]]:
+@app.post("/retrieve")
+def retrieve_context(req:RetrieveRequest) :
     """检索时多取候选再做归一化，避免 top_k=2 时第二个结果 norm 恒为 0 被误过滤。"""
-    embedding_model = context["embedding_model"]
-    query_embedding = embedding_model.encode(query).tolist()
-    collection = context["collection"]
+    score_threshold = config["rag"]["score_threshold"]
+    query_embedding = app.state.embedding_model.encode(req.query).tolist()
+    top_k = config["rag"]["top_k"]
     # 多取候选(至少 2*top_k 或 10)，在更大集合上做 min-max 归一化，避免末位恒为 0
     n_candidates = max(10, top_k * 3)
-    results = collection.query(
+    results = app.state.collection.query(
         query_embeddings=[query_embedding],
-        n_results=min(n_candidates, collection.count()),
+        n_results=min(n_candidates, app.state.collection.count()),
     )
     distances = results.get("distances", [[]])[0]
     documents = results.get("documents", [[]])[0]
@@ -57,17 +74,12 @@ def retrieve_context(
     final_result = sorted(final_result, reverse=True, key=lambda x: x["score"])
     return final_result[:top_k]
 
-
-def retrieve_context_raw(
-    query: str,
-    context: Dict[str, Any],
-    top_k: int,
-) -> List[Dict[str, Any]]:
+@app.post("/retrieve_raw")
+def retrieve_context_raw(req:RetrieveRequest):
     """无归一化检索：直接按 L2 距离升序返回 top_k，不做 score_threshold 过滤。用于对比实验。"""
-    embedding_model = context["embedding_model"]
-    collection = context["collection"]
-    query_embedding = embedding_model.encode(query).tolist()
-    results = collection.query(
+    query_embedding = app.state.embedding_model.encode(req.query).tolist()
+    top_k = config["rag"]["top_k"]
+    results = app.state.collection.query(
         query_embeddings=[query_embedding],
         n_results=top_k,
     )

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from config.config_loader import config
-from gateway.agent import initialize_runtime, load_knowledge_base, run_turn
+from orchestrator.orchestrator import initialize_runtime, run_turn
 from gateway.SessionStore import SessionStore
 import state.state_logger as state_logger
 
@@ -28,7 +28,6 @@ def startup_event():
     print("正在努力启动中......")
     global session_store
     app.state.runtime = initialize_runtime(config)
-    load_knowledge_base(config, app.state.runtime)
     session_store = SessionStore(config["llm"]["system_prompt"])
 
 

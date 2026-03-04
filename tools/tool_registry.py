@@ -1,10 +1,7 @@
 # tool_registry.py
-from sentence_transformers import SentenceTransformer
-import sqlite3,time
+import sqlite3,time,httpx
 from config.config_loader import config
-from pathlib import Path
 from typing import Any, Dict, Callable
-from rag.rag_pipeline import retrieve_context
 _embedding_model = None
 def make_result(ok: bool, code: str, message: str, payload: Any, latency_ms: float) -> Dict[str, Any]:
     return {
@@ -16,22 +13,7 @@ def make_result(ok: bool, code: str, message: str, payload: Any, latency_ms: flo
     }
 
 ToolFunc = Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]
-def get_embedding_model():
-    global _embedding_model 
-    if _embedding_model is not None:
-        return _embedding_model
-    else:
-        embedding_config = config["embedding"]
-        cache_dir_cfg = embedding_config.get("cache_dir", ".hf_cache")
-        cache_dir = Path(cache_dir_cfg)
-        if not cache_dir.is_absolute():
-            cache_dir = (Path(__file__).resolve().parent.parent / cache_dir).resolve()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        _embedding_model = SentenceTransformer(
-            embedding_config["model_name"], 
-            cache_folder=cache_dir
-        )
-        return _embedding_model
+
 def calculator(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,Any]:
     start = time.perf_counter()
     expression = action["expression"]
@@ -47,7 +29,15 @@ def search_knowledge(action: Dict[str, Any], context: Dict[str, Any])->Dict[str,
     rag = config["rag"]
     for attempt in range(max_retries):
         try:
-            results = retrieve_context(query,context,rag["top_k"],rag["score_threshold"])
+            resp = httpx.post(
+                "http://rag:8010/retrieve",   # 或 localhost:8010，取决于你本地如何启动 RAG
+                json={"query": query},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+            # RAG 返回的是 [{"doc_id", "text", "score"}, ...]，和原来 retrieve_context 一致
+            results = raw if isinstance(raw, list) else raw.get("results", raw)
             break
         except Exception as e:
             if attempt == max_retries - 1:

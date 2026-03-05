@@ -24,7 +24,8 @@ app = FastAPI()
 
 
 @app.on_event("startup")
-def startup_event():
+def startup_event() -> None:
+    """初始化 runtime 和 session_store。"""
     print("正在努力启动中......")
     global session_store
     app.state.runtime = initialize_runtime(config)
@@ -32,12 +33,13 @@ def startup_event():
 
 
 @app.get("/health")
-def health_check():
+def health_check() -> dict:
+    """健康检查接口。"""
     return {"status": "ok"}
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+def chat(request: ChatRequest) -> ChatResponse:
     session_id = request.session_id or str(uuid.uuid4())
     runtime = request.app.state.runtime
     session = session_store.get_or_create(session_id)

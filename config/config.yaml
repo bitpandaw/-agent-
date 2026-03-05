@@ -1,3 +1,7 @@
+redis:
+  url_env: "REDIS_URL"  # 环境变量名，如 redis://localhost:6379
+  default_url: "redis://localhost:6379"
+
 embedding:
   provider: "sentence_transformers"
   model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

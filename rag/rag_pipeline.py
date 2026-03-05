@@ -1,17 +1,22 @@
 from typing import Any, Dict, List
+
+import chromadb
+import httpx
 from fastapi import FastAPI
-from config.config_loader import config
-import httpx,chromadb
-from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
+
+from config.config_loader import config
 
 class RetrieveRequest(BaseModel):
     query: str
 
 app = FastAPI()
+
+
 @app.on_event("startup")
-def startup_event() :
-    filepath:str =  config["paths"]["knowledge_file"]
+def startup_event() -> None:
+    filepath: str = config["paths"]["knowledge_file"]
     app.state.embedding_model = SentenceTransformer(
         config["embedding"]["model_name"],
         cache_folder=config["embedding"].get("cache_dir", ".hf_cache")
@@ -22,15 +27,13 @@ def startup_event() :
     chunks = [chunk.strip() for chunk in content.split('\n\n') if chunk.strip()]
     chroma_client = chromadb.Client()
     app.state.collection  = chroma_client.get_or_create_collection(
-        name=config["rag"]["collection_name"], 
+        name=config["rag"]["collection_name"],
         metadata={"hnsw:space": config["rag"].get("distance", "l2")},
     )
     for i, chunk in enumerate(chunks):
         resp = httpx.post(
             "http://embedding:8011/embed",
-            json = {
-                "texts":[chunk],
-            },
+            json={"texts": [chunk]},
             timeout=30,
         )
         vectors = resp.json()["vectors"]
@@ -39,11 +42,10 @@ def startup_event() :
             embeddings=vectors,
             documents=[chunk]
         )
-   
 
 
 @app.post("/retrieve")
-def retrieve_context(req:RetrieveRequest) :
+def retrieve_context(req: RetrieveRequest) -> list:
     """检索时多取候选再做归一化，避免 top_k=2 时第二个结果 norm 恒为 0 被误过滤。"""
     score_threshold = config["rag"]["score_threshold"]
     query_embedding = app.state.embedding_model.encode(req.query).tolist()
@@ -75,7 +77,7 @@ def retrieve_context(req:RetrieveRequest) :
     return final_result[:top_k]
 
 @app.post("/retrieve_raw")
-def retrieve_context_raw(req:RetrieveRequest):
+def retrieve_context_raw(req: RetrieveRequest) -> list:
     """无归一化检索：直接按 L2 距离升序返回 top_k，不做 score_threshold 过滤。用于对比实验。"""
     query_embedding = app.state.embedding_model.encode(req.query).tolist()
     top_k = config["rag"]["top_k"]

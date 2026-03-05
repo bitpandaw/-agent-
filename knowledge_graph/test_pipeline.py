@@ -66,26 +66,28 @@ def test_tool_registry_import() -> None:
         })
 
 
-def test_structured_alarms() -> None:
-    """H-D: Is structured_alarms.json valid and non-empty?"""
-    path = Path(__file__).resolve().parent / "structured_alarms.json"
+def test_structured_articles() -> None:
+    """H-D: Is structured_articles.json valid and non-empty?"""
+    path = Path(__file__).resolve().parent / "structured_articles.json"
     if not path.exists():
-        _log("H-D", "test_pipeline.py:test_structured_alarms", "File not found", {"exists": False})
+        _log("H-D", "test_pipeline.py:test_structured_articles", "File not found", {"exists": False})
         return
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        sample = data[0] if data else {}
-        has_fields = all(k in sample for k in ["alarm_id", "components", "machine_data_ids", "referenced_alarms"])
-        _log("H-D", "test_pipeline.py:test_structured_alarms", "structured_alarms loaded", {
-            "count": len(data),
-            "sample_alarm_id": sample.get("alarm_id", ""),
-            "has_required_fields": has_fields,
+        articles = data.get("articles", [])
+        questions = data.get("questions", [])
+        sample_a = articles[0] if articles else {}
+        sample_q = questions[0] if questions else {}
+        has_articles = all(k in sample_a for k in ["title", "sentences"]) if sample_a else False
+        has_questions = all(k in sample_q for k in ["question_id", "text", "answer", "ref_articles"]) if sample_q else False
+        _log("H-D", "test_pipeline.py:test_structured_articles", "structured_articles loaded", {
+            "articles_count": len(articles),
+            "questions_count": len(questions),
+            "has_required_fields": has_articles and has_questions,
         })
     except json.JSONDecodeError as e:
-        _log("H-D", "test_pipeline.py:test_structured_alarms", "JSON parse error (LLM still running?)", {
-            "error": str(e)
-        })
+        _log("H-D", "test_pipeline.py:test_structured_articles", "JSON parse error", {"error": str(e)})
 
 
 def test_cypher_syntax() -> None:
@@ -99,13 +101,13 @@ def test_cypher_syntax() -> None:
             neo4j_cfg["uri"], auth=(neo4j_cfg["user"], neo4j_cfg["password"])
         )
         cypher = (
-            "MATCH (a:Alarm {alarm_id: $alarm_id})-[r]-(n) "
-            "RETURN type(r) AS relation, labels(n)[0] AS node_type, "
-            "COALESCE(n.name, n.md_id, n.text, n.alarm_id) AS value "
+            "MATCH (a:Article)-[:CONTAINS]->(s:Sentence) "
+            "WHERE a.title CONTAINS $query "
+            "RETURN a.title AS article, s.text AS sentence "
             "LIMIT 5"
         )
         with driver.session() as session:
-            result = session.run(cypher, alarm_id="2000")
+            result = session.run(cypher, query="Moscow")
             records = result.data()
         _log("H-E", "test_pipeline.py:test_cypher_syntax", "Cypher query OK", {
             "records_count": len(records),
@@ -123,6 +125,6 @@ if __name__ == "__main__":
     test_neo4j_package()
     test_neo4j_connection()
     test_tool_registry_import()
-    test_structured_alarms()
+    test_structured_articles()
     test_cypher_syntax()
     print(f"Done. Check logs at: {LOG_PATH}")

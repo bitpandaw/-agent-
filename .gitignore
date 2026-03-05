@@ -6,5 +6,6 @@ chroma_db/
 *.db
 .env
 experiments/
+!experiments/**/results/
 test/
 开发记录/

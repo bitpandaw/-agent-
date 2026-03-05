@@ -67,9 +67,9 @@ def plan_actions(
         tool_call_id = action.get("tool_call_id")
         if not isinstance(tool_args, dict):
             tool_args = {}
-        if tool_name == "query_fault_history":
-            tool_args.setdefault("equipment_id", None)
-            tool_args.setdefault("fault_type", None)
+        if tool_name == "query_qa_records":
+            tool_args.setdefault("article_title", None)
+            tool_args.setdefault("keyword", None)
         if not tool_name:
             continue
         actions.append({

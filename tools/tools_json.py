@@ -21,7 +21,7 @@ TOOLS_LIST = [
         "type": "function",
         "function": {
             "name": "search_knowledge",
-            "description": "Search the equipment knowledge base.",
+            "description": "Search the Wikipedia knowledge base (vector retrieval).",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -32,18 +32,18 @@ TOOLS_LIST = [
     {
         "type": "function",
         "function": {
-            "name": "query_fault_history",
-            "description": "查询设备的历史故障记录",
+            "name": "query_qa_records",
+            "description": "Query historical Q&A records by article title or keyword.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "equipment_id": {
+                    "article_title": {
                         "type": "string",
-                        "description": "设备编号,如EQ001(可选)"
+                        "description": "Filter by article title (optional)"
                     },
-                    "fault_type": {
+                    "keyword": {
                         "type": "string",
-                        "description": "故障类型，如'轴承异响'（可选）"
+                        "description": "Search in question/answer text (optional)"
                     }
                 }
             }
@@ -52,18 +52,18 @@ TOOLS_LIST = [
     {
         "type": "function",
         "function": {
-            "name": "search_knowledge_graph",
-            "description": "在故障诊断知识图谱中进行多跳推理查询。适合：根据报警号查关联部件和机床数据、追踪报警交叉引用、发现共享同一参数的报警。当用户提到具体报警号或需要关联分析时使用此工具。",
+            "name": "search_article_graph",
+            "description": "Query the article knowledge graph for multi-hop reasoning. Use article_title for exact article lookup, or query for keyword search.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "alarm_id": {
+                    "article_title": {
                         "type": "string",
-                        "description": "报警编号，如'2000'或'10720'（可选）"
+                        "description": "Exact article title (optional)"
                     },
                     "query": {
                         "type": "string",
-                        "description": "关键词查询，如'温度'或'PLC'（可选，当没有具体报警号时使用）"
+                        "description": "Keyword to search in article/sentence (optional)"
                     }
                 }
             }

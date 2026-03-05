@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Industrial equipment fault diagnosis agent system for SINUMERIK 808D CNC machines. Combines RAG (ChromaDB + sentence-transformers) with a DeepSeek LLM in a ReAct-style loop (Plan → Execute → Repeat) exposed via FastAPI.
+HotpotQA Wikipedia multi-hop QA agent. Combines RAG (ChromaDB + sentence-transformers) with a DeepSeek LLM in a ReAct-style loop (Plan → Execute → Repeat) exposed via FastAPI. Tools: search_knowledge (RAG), query_qa_records (SQL), search_article_graph (Neo4j KG).
 
 **Required env var:** `DEEPSEEK_API_KEY`
 
@@ -14,7 +14,7 @@ Industrial equipment fault diagnosis agent system for SINUMERIK 808D CNC machine
 # Install dependencies
 pip install -r requirements.txt
 
-# Initialize SQLite DB with sample fault records
+# Initialize SQLite DB with qa_records (from hotpotqa_db_seed.json or HotpotQA)
 python init_db.py
 
 # Start API server
@@ -26,7 +26,7 @@ curl http://localhost:8000/health
 # Chat request
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "808D轴承异响如何排查?", "session_id": "test-1"}'
+  -d '{"message": "In what year was Moscow State University founded?", "session_id": "test-1"}'
 
 # Run RAG evaluation experiments (in experiments/ directory)
 python experiments/gen_verification_report.py
@@ -50,7 +50,7 @@ POST /chat
       ├─ executor.execute_actions(): dispatches to TOOL_REGISTRY
       │    ├─ search_knowledge → rag_pipeline.retrieve_context()
       │    ├─ calculator → eval() on expression
-      │    └─ query_fault_history → SQLite query on fault_history.db
+      │    └─ query_qa_records → SQLite query on hotpot.db; search_article_graph → Neo4j
       └─ tool results appended to conversation, loop repeats
   → state_logger.log_turn(): records in session state
   → ChatResponse {reply, session_id, turn_id}
@@ -66,7 +66,7 @@ POST /chat
 | `orchestrator/orchestrator.py` | ReAct loop coordinator |
 | `planner/planner.py` | Calls DeepSeek with OpenAI function-calling format, parses tool_calls, retries up to 10x |
 | `executor/executor.py` | Looks up and calls tools from TOOL_REGISTRY, returns structured `ToolResult` |
-| `tools/tool_registry.py` | Three tool implementations + `TOOL_REGISTRY` dict |
+| `tools/tool_registry.py` | Four tools: search_knowledge, query_qa_records, search_article_graph, calculator |
 | `tools/tools_json.py` | Tool schemas in OpenAI function-calling format for the LLM |
 | `rag/rag_pipeline.py` | Chunk document, index to ChromaDB, retrieve with min-max normalization |
 | `config/config.yaml` | All configuration (embedding model, RAG params, LLM endpoint, file paths) |
@@ -93,11 +93,11 @@ All knobs are in `config/config.yaml`. Key settings:
 - `rag.score_threshold`: min-max normalized score cutoff (default 0.3)
 - `rag.distance`: ChromaDB distance metric (`cosine`, `l2`, `ip`)
 - `llm.api_key_env`: env var name for the API key (`DEEPSEEK_API_KEY`)
-- `paths.knowledge_file`: path to the knowledge base text (`equipment_knowledge.txt`)
+- `paths.knowledge_file`: path to the knowledge base text (`data/hotpot_knowledge.txt`)
 
 ### RAG Pipeline Notes
 
-- Knowledge base (`equipment_knowledge.txt`, ~1.1MB) is chunked by blank lines at startup and loaded into an **in-memory** ChromaDB collection — data is lost on server restart.
+- Knowledge base (`data/hotpot_knowledge.txt`, from HotpotQA context) is chunked by blank lines at startup and loaded into an **in-memory** ChromaDB collection — data is lost on server restart.
 - Retrieval uses min-max normalization: `norm = (d_max - d) / (d_max - d_min + eps)` to handle single-result edge cases.
 - `retrieve_context_raw()` returns unnormalized L2 distances for comparison/experiments.
 

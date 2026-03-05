@@ -1,67 +1,91 @@
+"""初始化 hotpot.db，创建 qa_records 表。
+
+优先从 hotpotqa_db_seed.json 加载；若不存在则从 HuggingFace HotpotQA 采样。
+"""
+
+import json
 import random
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
+
+from config.config_loader import config
+
+SEED_FILE = Path(__file__).resolve().parent / "hotpotqa_db_seed.json"
+
+
+def _load_from_seed() -> list[tuple[str, str, str, str]] | None:
+    """从 hotpotqa_db_seed.json 加载，返回 (question, answer, article_titles_json, created_at) 列表。"""
+    if not SEED_FILE.exists():
+        return None
+    data = json.loads(SEED_FILE.read_text(encoding="utf-8"))
+    records = []
+    for item in data:
+        q = item.get("question", "")
+        a = item.get("answer", "")
+        titles = item.get("article_titles", [])
+        created = item.get("created_at", "")
+        if q and a:
+            records.append((q, a, json.dumps(titles, ensure_ascii=False), created))
+    return records if records else None
+
+
+def _load_from_hotpotqa() -> list[tuple[str, str, str, str]]:
+    """从 HuggingFace HotpotQA 采样。"""
+    from datasets import load_dataset  # noqa: PLC0415
+
+    ds = load_dataset("hotpot_qa", "distractor", split="validation", trust_remote_code=False)
+    rng = random.Random(42)
+    n = min(100, len(ds))
+    indices = rng.sample(range(len(ds)), n)
+    base_date = datetime.now()
+    records = []
+    for i in indices:
+        sample = ds[i]
+        titles = sample["supporting_facts"]["title"]
+        days_ago = random.randint(0, 90)
+        created_at = (base_date - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        records.append((
+            sample["question"],
+            sample["answer"],
+            json.dumps(titles, ensure_ascii=False),
+            created_at,
+        ))
+    return records
 
 
 def init_database() -> None:
-    """初始化 SQLite 故障历史表并插入示例数据。"""
-    with sqlite3.connect("fault_history.db") as conn:
+    """创建 qa_records 表并插入数据。"""
+    records = _load_from_seed()
+    if records is None:
+        try:
+            records = _load_from_hotpotqa()
+        except ImportError:
+            print("Error: datasets 未安装，且 hotpotqa_db_seed.json 不存在。请 pip install datasets")
+            return
+        print("从 HuggingFace HotpotQA 加载...")
+    else:
+        print(f"从 {SEED_FILE.name} 加载...")
+
+    db_path = config["paths"]["db"]
+    with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS fault_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fault_type TEXT,
-            occurrence_date TEXT,
-            solution TEXT,
-            downtime_hours REAL,
-            equipment_id TEXT,
-            CHECK(fault_type IN ('轴承异响', '温度异常', '振动异常', '液压系统故障'))
-        )
-        ''')
-
-        fault_types = ["轴承异响", "温度异常", "振动异常", "液压系统故障"]
-        equipment_ids = ["EQ001", "EQ002", "EQ003"]
-
-        solutions = {
-            "轴承异响": ["更换轴承", "加注润滑油", "调整轴承间隙"],
-            "温度异常": ["清洗散热器", "更换冷却液", "检修冷却泵"],
-            "振动异常": ["紧固螺栓", "更换减震垫", "动平衡校准"],
-            "液压系统故障": ["更换液压油", "修复密封件", "清洗滤芯"],
-        }
-
-        records = []
-        base_date = datetime.now()
-
-        for i in range(50):
-            fault_type = random.choice(fault_types)
-            days_ago = random.randint(0, 90)
-            occurrence_date = (
-                base_date - timedelta(days=days_ago)
-            ).strftime("%Y-%m-%d")
-            solution = random.choice(solutions[fault_type])
-            downtime_hours = round(random.uniform(0.5, 8), 1)
-            equipment_id = random.choice(equipment_ids)
-            record = (
-                equipment_id, fault_type, occurrence_date, solution, downtime_hours
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qa_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                article_titles TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
-            records.append(record)
+        """)
         cursor.executemany(
-            "INSERT INTO fault_records(equipment_id, fault_type, occurrence_date, "
-            "solution, downtime_hours) VALUES(?,?,?,?,?)",
+            "INSERT INTO qa_records(question, answer, article_titles, created_at) VALUES(?,?,?,?)",
             records,
         )
         conn.commit()
-        cursor.execute("SELECT COUNT(*) FROM fault_records")
-        print(f"✅ 数据库初始化完成，共{cursor.fetchone()[0]}条记录")
-
-        cursor.execute("""
-            SELECT equipment_id, fault_type, COUNT(*)
-            FROM fault_records
-            GROUP BY equipment_id, fault_type
-        """)
-        print("\n📊 数据分布:")
-        for row in cursor.fetchall():
-            print(f"  {row[0]} - {row[1]}: {row[2]}条")
+        cursor.execute("SELECT COUNT(*) FROM qa_records")
+        print(f"数据库初始化完成，共 {cursor.fetchone()[0]} 条 qa_records")
 
 
 if __name__ == "__main__":

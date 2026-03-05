@@ -68,7 +68,7 @@ def search_knowledge(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
     for attempt in range(max_retries):
         try:
             resp = httpx.post(
-                "http://rag:8010/retrieve",   # 或 localhost:8010，取决于你本地如何启动 RAG
+                "http://localhost:8010/retrieve",
                 json={"query": query},
                 timeout=30,
             )
@@ -98,24 +98,26 @@ def search_knowledge(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[st
     )
 
 
-def query_fault_history(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+def query_qa_records(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     start = time.perf_counter()
     db_path = config["paths"]["db"]
+    article_title = action.get("article_title") or ""
+    keyword = action.get("keyword") or ""
+
+    sql = "SELECT question, answer, article_titles, created_at FROM qa_records "
     params: tuple = ()
-    equipment_id = action["equipment_id"]
-    fault_type = action["fault_type"]
-    sql = "SELECT * FROM fault_records "
-    if equipment_id and fault_type:
-        sql += "WHERE equipment_id = ? AND fault_type = ?"
-        params = (equipment_id, fault_type)
-    elif equipment_id and not fault_type:
-        sql += "WHERE equipment_id = ?"
-        params = (equipment_id,)
-    elif not equipment_id and fault_type:
-        sql += "WHERE fault_type = ?"
-        params = (fault_type,)
+    if article_title and keyword:
+        sql += "WHERE article_titles LIKE ? AND (question LIKE ? OR answer LIKE ?)"
+        params = (f"%{article_title}%", f"%{keyword}%", f"%{keyword}%")
+    elif article_title:
+        sql += "WHERE article_titles LIKE ?"
+        params = (f"%{article_title}%",)
+    elif keyword:
+        sql += "WHERE question LIKE ? OR answer LIKE ?"
+        params = (f"%{keyword}%", f"%{keyword}%")
     else:
         sql += "LIMIT 10"
+
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(sql, params)
@@ -123,43 +125,41 @@ def query_fault_history(action: Dict[str, Any], context: Dict[str, Any]) -> Dict
         if not rows:
             return make_result(
                 False, "F_DB_QUERY", "未找到匹配数据", None,
-                (time.perf_counter() - start) * 1000
+                (time.perf_counter() - start) * 1000,
             )
         lines = [f"找到{len(rows)}条记录："]
-        for i, row in enumerate(rows, 1):
-            _, ft, date, sol, hours, eq = row
-            lines.append(f"{i}. {eq} - {ft} - {date} - 解决方案：{sol} - 停机{hours}小时")
+        for i, (q, a, titles, dt) in enumerate(rows, 1):
+            q_short = (q[:60] + "...") if len(q) > 60 else q
+            lines.append(f"{i}. Q: {q_short} | A: {a} | 文章: {titles} | {dt}")
         return make_result(
             True, "S_DB_QUERY", "找到匹配数据", "\n".join(lines),
-            (time.perf_counter() - start) * 1000
+            (time.perf_counter() - start) * 1000,
         )
-def search_knowledge_graph(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-    start = time.perf_counter()
-    alarm_id = action.get("alarm_id", "")
-    query = action.get("query", "")
 
-    if alarm_id:
+
+def search_article_graph(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    start = time.perf_counter()
+    article_title = action.get("article_title") or ""
+    query = action.get("query") or ""
+
+    if article_title:
         cypher = (
-            "MATCH (a:Alarm {alarm_id: $alarm_id})-[r]-(n) "
-            "RETURN type(r) AS relation, labels(n)[0] AS node_type, "
-            "COALESCE(n.name, n.md_id, n.text, n.alarm_id) AS value "
-            "LIMIT 20"
+            "MATCH (a:Article {title: $title})-[:CONTAINS]->(s:Sentence) "
+            "RETURN a.title AS article, s.text AS sentence "
+            "LIMIT 15"
         )
-        params = {"alarm_id": alarm_id}
+        params: dict = {"title": article_title}
     elif query:
         cypher = (
-            "MATCH (a:Alarm) WHERE a.alarm_text CONTAINS $query "
-            "OR a.description CONTAINS $query "
-            "OPTIONAL MATCH (a)-[r]-(n) "
-            "RETURN a.alarm_id, a.alarm_text, type(r) AS relation, "
-            "labels(n)[0] AS node_type, "
-            "COALESCE(n.name, n.md_id, n.text) AS value "
-            "LIMIT 30"
+            "MATCH (a:Article)-[:CONTAINS]->(s:Sentence) "
+            "WHERE s.text CONTAINS $query OR a.title CONTAINS $query "
+            "RETURN a.title AS article, s.text AS sentence "
+            "LIMIT 15"
         )
         params = {"query": query}
     else:
         return make_result(
-            False, "E_KG_PARAM", "需要提供 alarm_id 或 query 参数", None,
+            False, "E_KG_PARAM", "需要提供 article_title 或 query 参数", None,
             (time.perf_counter() - start) * 1000,
         )
 
@@ -173,8 +173,9 @@ def search_knowledge_graph(action: Dict[str, Any], context: Dict[str, Any]) -> D
                 False, "E_KG_EMPTY", "未找到相关图谱数据", None,
                 (time.perf_counter() - start) * 1000,
             )
+        lines = [f"[{r['article']}] {r['sentence'][:120]}..." for r in records]
         return make_result(
-            True, "S_KG", f"查询到{len(records)}条关联", records,
+            True, "S_KG", f"查询到{len(records)}条", "\n".join(lines),
             (time.perf_counter() - start) * 1000,
         )
     except Exception as e:
@@ -186,8 +187,8 @@ def search_knowledge_graph(action: Dict[str, Any], context: Dict[str, Any]) -> D
 
 # Tool registry
 TOOL_REGISTRY: Dict[str, ToolFunc] = {
-    "search_knowledge_graph":search_knowledge_graph,
     "search_knowledge": search_knowledge,
+    "query_qa_records": query_qa_records,
+    "search_article_graph": search_article_graph,
     "calculator": calculator,
-    "query_fault_history": query_fault_history,
 }

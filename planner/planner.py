@@ -36,7 +36,7 @@ def plan_actions(
             break
         except Exception as e:
             if attempt == max_retries - 1:
-                raise RuntimeError(f"与client连接失败,错误原因:{e}") from e
+                raise RuntimeError(f"LLM request failed after {max_retries} retries: {e}") from e
             time.sleep(10)
     ai_reply = response.choices[0].message
     if not ai_reply.tool_calls:
@@ -79,5 +79,3 @@ def plan_actions(
         })
     result["actions"] = actions
     return result
-
-

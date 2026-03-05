@@ -1,7 +1,6 @@
 import threading
 from datetime import datetime
 from typing import Any, Dict
-import redis
 
 class SessionStore:
     """线程安全的会话存储，管理 conversation 与 session_state。"""

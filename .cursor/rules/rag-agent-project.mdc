@@ -1,0 +1,26 @@
+---
+description: RAG Agent 项目上下文与架构约定
+alwaysApply: true
+---
+
+# 工业设备故障诊断 RAG Agent
+
+## 项目定位
+SINUMERIK 808D 故障诊断系统，RAG + ReAct + 多工具（search_knowledge / calculator / query_fault_history）。技术栈：ChromaDB、SentenceTransformer、DeepSeek、FastAPI，自研架构（未用 LangChain）。
+
+## 核心模块
+| 模块 | 职责 |
+|------|------|
+| gateway | FastAPI 入口，/chat、SessionStore |
+| orchestrator | ReAct 循环编排，调 planner + executor |
+| planner | 调 LLM，解析 tool_calls |
+| executor | 执行 TOOL_REGISTRY 中的工具 |
+| tools | search_knowledge（→ RAG HTTP）、calculator、query_fault_history |
+| rag | 分块、索引、检索，min-max 归一化 |
+
+## 数据契约
+- **PlanAction**: `{tool_name, tool_args, tool_call_id}`
+- **ToolResult**: `{ok, code, message, payload, latency_ms, tool_name}`
+
+## 分布式改造顺序（见开发记录/DISTRIBUTED_ARCHITECTURE.md）
+1. Gateway + Redis  2. Planner 独立  3. RAG 已独立  4. Executor 独立  5. Orchestrator 独立  6. Docker Compose

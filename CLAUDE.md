@@ -31,6 +31,7 @@ curl -X POST http://localhost:8000/chat \
 # Run RAG evaluation experiments (in experiments/ directory)
 python experiments/gen_verification_report.py
 python experiments/run_rag_norm_experiment.py
+python experiments/run_kg_rag_experiment.py  # 有/无知识图谱对比，需 Neo4j 运行且 build_graph 已导入
 ```
 
 There is no test runner or linter configured. No `setup.py`, `pyproject.toml`, or `Makefile`.

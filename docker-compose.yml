@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: rag-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/u152142445
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:

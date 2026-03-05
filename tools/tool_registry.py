@@ -2,13 +2,36 @@
 import sqlite3
 import time
 from typing import Any, Callable, Dict
-
+from neo4j import GraphDatabase
 import httpx
 
 from config.config_loader import config
 
 _embedding_model = None
 
+
+def get_embedding_model():
+    """懒加载 SentenceTransformer，供 experiments 等本地脚本使用。"""
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer(
+            config["embedding"]["model_name"],
+            cache_folder=config["embedding"].get("cache_dir", ".hf_cache"),
+        )
+    return _embedding_model
+_neo4j_driver = None
+
+
+def _get_neo4j_driver():
+    global _neo4j_driver
+    if _neo4j_driver is None:
+        neo4j_cfg = config["neo4j"]
+        _neo4j_driver = GraphDatabase.driver(
+            neo4j_cfg["uri"],
+            auth=(neo4j_cfg["user"], neo4j_cfg["password"]),
+        )
+    return _neo4j_driver
 
 def make_result(
     ok: bool, code: str, message: str, payload: Any, latency_ms: float
@@ -110,9 +133,60 @@ def query_fault_history(action: Dict[str, Any], context: Dict[str, Any]) -> Dict
             True, "S_DB_QUERY", "找到匹配数据", "\n".join(lines),
             (time.perf_counter() - start) * 1000
         )
+def search_knowledge_graph(action: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    start = time.perf_counter()
+    alarm_id = action.get("alarm_id", "")
+    query = action.get("query", "")
+
+    if alarm_id:
+        cypher = (
+            "MATCH (a:Alarm {alarm_id: $alarm_id})-[r]-(n) "
+            "RETURN type(r) AS relation, labels(n)[0] AS node_type, "
+            "COALESCE(n.name, n.md_id, n.text, n.alarm_id) AS value "
+            "LIMIT 20"
+        )
+        params = {"alarm_id": alarm_id}
+    elif query:
+        cypher = (
+            "MATCH (a:Alarm) WHERE a.alarm_text CONTAINS $query "
+            "OR a.description CONTAINS $query "
+            "OPTIONAL MATCH (a)-[r]-(n) "
+            "RETURN a.alarm_id, a.alarm_text, type(r) AS relation, "
+            "labels(n)[0] AS node_type, "
+            "COALESCE(n.name, n.md_id, n.text) AS value "
+            "LIMIT 30"
+        )
+        params = {"query": query}
+    else:
+        return make_result(
+            False, "E_KG_PARAM", "需要提供 alarm_id 或 query 参数", None,
+            (time.perf_counter() - start) * 1000,
+        )
+
+    try:
+        driver = _get_neo4j_driver()
+        with driver.session() as session:
+            result = session.run(cypher, **params)
+            records = result.data()
+        if not records:
+            return make_result(
+                False, "E_KG_EMPTY", "未找到相关图谱数据", None,
+                (time.perf_counter() - start) * 1000,
+            )
+        return make_result(
+            True, "S_KG", f"查询到{len(records)}条关联", records,
+            (time.perf_counter() - start) * 1000,
+        )
+    except Exception as e:
+        return make_result(
+            False, "E_KG_QUERY", f"知识图谱查询失败: {e}", None,
+            (time.perf_counter() - start) * 1000,
+        )
+
 
 # Tool registry
 TOOL_REGISTRY: Dict[str, ToolFunc] = {
+    "search_knowledge_graph":search_knowledge_graph,
     "search_knowledge": search_knowledge,
     "calculator": calculator,
     "query_fault_history": query_fault_history,

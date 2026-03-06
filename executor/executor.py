@@ -2,6 +2,7 @@ import time
 from typing import Any, Dict, List
 
 
+
 def make_result(
     tool_name: str,
     ok: bool,
@@ -28,10 +29,10 @@ def execute_actions(
     tool_events: List[Dict[str, Any]] = []
     
     for action in plan_actions:
-        start = time.perf_counter()
-        tool_name = action.get("tool_name")
-        tool_args = action.get("tool_args")
-        tool = tool_registry.get(tool_name)
+        start: float = time.perf_counter()
+        tool_name: str | None = action.get("tool_name")
+        tool_args: Any = action.get("tool_args")
+        tool: Any = tool_registry.get(tool_name)
         if tool is None:
             tool_events.append(
                 make_result(
@@ -41,7 +42,7 @@ def execute_actions(
             )
             continue
         try:
-            raw = tool(tool_args, context)
+            raw: Any = tool(tool_args, context)
             required = {"ok", "code", "message", "payload", "latency_ms"}
             if isinstance(raw, dict) and required.issubset(raw.keys()):
                 raw["tool_name"] = tool_name

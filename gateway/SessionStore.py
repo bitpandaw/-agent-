@@ -15,7 +15,7 @@ class SessionStore:
             if session_id in self.session_store:
                 return self.session_store[session_id]
             else:
-                session = {
+                session: Dict[str, Any] = {
                     "session_state": self.init_session_state(session_id),
                     "conversation": [{"role": "system", "content": self.system_prompt}],
                     "lock": threading.Lock(),

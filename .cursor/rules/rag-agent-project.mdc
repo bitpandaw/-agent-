@@ -6,16 +6,16 @@ alwaysApply: true
 # 工业设备故障诊断 RAG Agent
 
 ## 项目定位
-SINUMERIK 808D 故障诊断系统，RAG + ReAct + 多工具（search_knowledge / calculator / query_fault_history）。技术栈：ChromaDB、SentenceTransformer、DeepSeek、FastAPI，自研架构（未用 LangChain）。
+工业设备故障诊断智能问答系统，RAG + 基于 Function Calling 的多步工具调用循环（orchestrator 控制 max_steps）+ 多工具（search_knowledge / query_qa_records / search_article_graph / calculator）。技术栈：ChromaDB、SentenceTransformer、DeepSeek、FastAPI、Neo4j，自研架构（未用 LangChain）。**HotpotQA 仅用于测试与验证**，实际场景可切换为工业知识库。
 
 ## 核心模块
 | 模块 | 职责 |
 |------|------|
 | gateway | FastAPI 入口，/chat、SessionStore |
-| orchestrator | ReAct 循环编排，调 planner + executor |
+| orchestrator | 基于Function Calling的多步工具调用循环，调 planner + executor，控制 max_steps |
 | planner | 调 LLM，解析 tool_calls |
 | executor | 执行 TOOL_REGISTRY 中的工具 |
-| tools | search_knowledge（→ RAG HTTP）、calculator、query_fault_history |
+| tools | search_knowledge（→ RAG HTTP）、calculator、query_qa_records、search_article_graph |
 | rag | 分块、索引、检索，min-max 归一化 |
 
 ## 数据契约

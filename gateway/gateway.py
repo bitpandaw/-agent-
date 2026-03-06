@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -40,15 +41,17 @@ def health_check() -> dict:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
-    session_id = request.session_id or str(uuid.uuid4())
-    runtime = request.app.state.runtime
-    session = session_store.get_or_create(session_id)
-    turn_context = {
+    session_id: str = request.session_id or str(uuid.uuid4())
+    runtime: Any = app.state.runtime
+    session: dict[str, Any] = session_store.get_or_create(session_id)
+    turn_context: dict[str, Any] = {
         **runtime,
         "conversation": session["conversation"],
     }
     with session["lock"]:
-        turn_result = run_turn(request.message, turn_context, session["session_state"])
+        turn_result: dict[str, Any] = run_turn(
+            request.message, turn_context, session["session_state"]
+        )
         state_logger.log_turn(session["session_state"], turn_result)
     return ChatResponse(
         reply=turn_result["assistant_output"],

@@ -29,10 +29,11 @@ embedding:
 # RAG（检索增强）
 # =============================================================================
 rag:
-  top_k: 4
+  top_k: 30
   score_threshold: 0.3
   collection_name: "default"
   distance: "cosine"  # l2 | cosine | ip
+  use_kg: true  # 与 HotpotQA/structured_articles 同源，默认启用 KG 检索
 
 # =============================================================================
 # LLM（主对话模型）

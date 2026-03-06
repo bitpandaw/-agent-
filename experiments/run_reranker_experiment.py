@@ -1,4 +1,4 @@
-"""RAG、RAG+Reranker、RAG+KG、RAG+KG+Reranker 对比实验。
+"""RAG+Reranker、RAG+KG+Reranker 对比实验。
 
 输出 hit@k、recall@k、precision@k、mrr、ndcg、map、coverage。
 
@@ -10,9 +10,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -21,34 +24,38 @@ sys.path.insert(0, str(ROOT))
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 RAG_URL = "http://localhost:8010/retrieve"
-MAX_SAMPLES = 100
-TOP_KS = [1, 5, 10, 20]
+MAX_SAMPLES = 50
+TOP_KS = [1, 5, 10, 20, 30]
+TOP_K = max(TOP_KS)
+DEFAULT_WORKERS = 8
 
 
-def _fetch_kg(query: str) -> list[dict]:
-    """从 Neo4j KG 按 query 检索，返回 [{text}, ...]。"""
+def _fetch_rag(
+    client: httpx.Client,
+    query: str,
+    use_reranker: bool,
+    use_kg: bool,
+) -> list[dict]:
     try:
-        from config.config_loader import config
-        from neo4j import GraphDatabase
-
-        cfg = config["neo4j"]
-        driver = GraphDatabase.driver(
-            cfg["uri"], auth=(cfg["user"], cfg["password"])
+        resp = client.post(
+            RAG_URL,
+            json={
+                "query": query,
+                "use_reranker": use_reranker,
+                "use_kg": use_kg,
+            },
+            timeout=60,
         )
-        cypher = (
-            "MATCH (a:Article)-[:CONTAINS]->(s:Sentence) "
-            "WHERE s.text CONTAINS $query OR a.title CONTAINS $query "
-            "RETURN a.title AS article, s.text AS sentence LIMIT 15"
-        )
-        with driver.session() as session:
-            recs = session.run(cypher, query=query).data()
-        driver.close()
-        return [{"text": r["sentence"], "doc_id": f"kg_{r['article']}"} for r in recs]
-    except Exception:
-        return []
+        resp.raise_for_status()
+        rag = resp.json()
+        if isinstance(rag, list):
+            return list(rag)
+    except Exception as e:
+        print(f"  Error RAG: {e}")
+    return []
 
 
-def load_hotpotqa():
+def load_hotpotqa(max_samples: int):
     """加载 HotpotQA validation，返回 (question, relevant_texts) 列表。"""
     try:
         from datasets import load_dataset
@@ -57,7 +64,7 @@ def load_hotpotqa():
         sys.exit(1)
     ds = load_dataset("hotpot_qa", "distractor", split="validation", trust_remote_code=False)
     samples = []
-    for i in range(min(MAX_SAMPLES, len(ds))):
+    for i in range(min(max_samples, len(ds))):
         s = ds[i]
         ctx_titles = s["context"]["title"]
         ctx_sentences = s["context"]["sentences"]
@@ -83,7 +90,9 @@ def _is_relevant(doc_text: str, relevant_texts: set[str]) -> bool:
     return False
 
 
-def compute_metrics(retrieved: list, relevant_texts: set[str], k_values: list[int]) -> dict:
+def compute_metrics(
+    retrieved: list, relevant_texts: set[str], k_values: list[int]
+) -> dict:
     """计算 hit@k, recall@k, precision@k, mrr@k, ndcg@k, map@k, coverage@k。"""
     rel_list = list(relevant_texts)
     hit_rel = [i for i, d in enumerate(retrieved) if _is_relevant(d.get("text", ""), relevant_texts)]
@@ -138,52 +147,142 @@ def aggregate(samples_metrics: list[dict], k_values: list[int]) -> dict:
     return out
 
 
+def _process_one(
+    client: httpx.Client,
+    q: str,
+    rel: set[str],
+    use_reranker: bool,
+    use_kg: bool,
+    top_ks: list[int],
+) -> dict:
+    rag = _fetch_rag(client, q, use_reranker, use_kg)
+    return compute_metrics(rag, rel, top_ks)
+
+
+def run_variant(
+    name: str,
+    use_reranker: bool,
+    use_kg: bool,
+    samples: list[tuple[str, set[str]]],
+    top_ks: list[int],
+    workers: int,
+) -> dict:
+    print(f"Running {name}...")
+    samples_metrics: list[dict] = []
+    with httpx.Client() as client:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [
+                ex.submit(
+                    _process_one,
+                    client,
+                    q,
+                    rel,
+                    use_reranker,
+                    use_kg,
+                    top_ks,
+                )
+                for q, rel in samples
+            ]
+            for i, f in enumerate(as_completed(futures), 1):
+                samples_metrics.append(f.result())
+                if i % 10 == 0 or i == len(futures):
+                    print(f"  {name}: {i}/{len(futures)} done")
+    return aggregate(samples_metrics, top_ks)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument("--max-samples", type=int, default=MAX_SAMPLES)
+    p.add_argument("--top-ks", type=str, default="1,5,10,20,30")
+    p.add_argument(
+        "--variant",
+        type=str,
+        default="all",
+        choices=["all", "rag_reranker", "rag_kg_reranker"],
+    )
+    p.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    p.add_argument("--out", type=str, default=None)
+    return p.parse_args()
+
+
 def main() -> None:
-    samples = load_hotpotqa()
+    args = parse_args()
+    top_ks = [int(x) for x in args.top_ks.split(",") if x.strip()]
+    top_ks = sorted(set(top_ks))
+    top_k = max(top_ks) if top_ks else TOP_K
+    samples = load_hotpotqa(args.max_samples)
     print(f"Loaded {len(samples)} samples from HotpotQA validation")
+    print(f"Evaluating top_ks={top_ks} (pipeline returns up to config.rag.top_k)")
 
     variants = [
-        ("rag_only", False, False),
         ("rag_reranker", True, False),
-        ("rag_kg", False, True),
         ("rag_kg_reranker", True, True),
     ]
-    results = {}
+    active = [
+        (name, use_reranker, use_kg)
+        for name, use_reranker, use_kg in variants
+        if args.variant == "all" or name == args.variant
+    ]
+    results: dict[str, dict] = {}
 
-    for name, use_reranker, use_kg in variants:
-        print(f"Running {name}...")
-        samples_metrics = []
-        for q, rel in samples:
-            retrieved = []
-            try:
-                resp = httpx.post(
-                    RAG_URL,
-                    json={"query": q, "use_reranker": use_reranker},
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                rag = resp.json()
-                if isinstance(rag, list):
-                    retrieved = list(rag)
-            except Exception as e:
-                print(f"  Error RAG: {e}")
-            if use_kg:
-                kg_docs = _fetch_kg(q)
-                seen = {d.get("text", "")[:100] for d in retrieved}
-                for d in kg_docs:
-                    if d.get("text", "")[:100] not in seen:
-                        retrieved.append(d)
-                        seen.add(d.get("text", "")[:100])
-            metrics = compute_metrics(retrieved, rel, TOP_KS)
-            samples_metrics.append(metrics)
-        results[name] = aggregate(samples_metrics, TOP_KS)
+    if len(active) > 1:
+        total_workers = max(1, args.workers)
+        base = max(1, total_workers // len(active))
+        remainder = total_workers - base * len(active)
+        if total_workers < len(active):
+            print(
+                f"Warning: workers={total_workers} < variants={len(active)}, "
+                "effective total concurrency will exceed workers."
+            )
+        per_variant_workers = [
+            base + (1 if i < remainder else 0) for i in range(len(active))
+        ]
         print(
-            f"  {name}: hit@1={results[name].get('hit@1', 0):.2f} "
-            f"mrr={results[name].get('mrr', 0):.2f}"
+            "Running variants in parallel "
+            f"(total_workers={total_workers}, per_variant={per_variant_workers})"
         )
+        with ThreadPoolExecutor(max_workers=len(active)) as ex:
+            futures = {}
+            for i, (name, use_reranker, use_kg) in enumerate(active):
+                futures[
+                    ex.submit(
+                        run_variant,
+                        name,
+                        use_reranker,
+                        use_kg,
+                        samples,
+                        top_ks,
+                        per_variant_workers[i],
+                    )
+                ] = name
+            for f in as_completed(futures):
+                name = futures[f]
+                results[name] = f.result()
+                print(
+                    f"  {name}: hit@1={results[name].get('hit@1', 0):.2f} "
+                    f"mrr@{top_k}={results[name].get(f'mrr@{top_k}', 0):.2f}"
+                )
+    else:
+        for name, use_reranker, use_kg in active:
+            results[name] = run_variant(
+                name,
+                use_reranker,
+                use_kg,
+                samples,
+                top_ks,
+                max(1, args.workers),
+            )
+            print(
+                f"  {name}: hit@1={results[name].get('hit@1', 0):.2f} "
+                f"mrr@{top_k}={results[name].get(f'mrr@{top_k}', 0):.2f}"
+            )
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RESULTS_DIR / "reranker_summary.json"
+    out_path = (
+        Path(args.out)
+        if args.out
+        else RESULTS_DIR / "reranker_summary.json"
+    )
     out_path.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nResults saved to {out_path}")
 

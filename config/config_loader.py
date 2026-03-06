@@ -1,14 +1,15 @@
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 
-def read_config() -> dict:
-    config_path = Path(__file__).resolve().parent / "config.yaml"
+def read_config() -> dict[str, Any]:
+    config_path: Path = Path(__file__).resolve().parent / "config.yaml"
     try:
         with config_path.open(mode="r", encoding="utf-8") as f:
-            config_dict = yaml.safe_load(f)
-        return config_dict
+            config_dict: dict[str, Any] | None = yaml.safe_load(f)
+        return config_dict if isinstance(config_dict, dict) else {}
     except FileNotFoundError:
         raise FileNotFoundError(f"Config file not found: {config_path}")
     except yaml.YAMLError as e:

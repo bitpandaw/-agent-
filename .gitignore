@@ -1,11 +1,56 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+.Python
 venv/
+.venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 环境与密钥
+.env
+.env.local
+.env.*.local
+
+# HuggingFace 缓存
 .hf_cache/
+.hf_cache_tmp/
+.hf/
+hf/
+hf2/
+.hf_cache_test/
+.claude/
+
+# 运行时数据
 chroma_db/
 *.db
-.env
-experiments/
-!experiments/**/results/
+state/logs/
+state/*.json
+record/
+neo4j_data/
+
+# 日志与临时
+*.log
+*.tmp
+.DS_Store
+
+# IDE（按需取消）
+# .idea/
+# .vscode/
+# .cursor/
+
+# 实验输出（保留脚本，忽略结果）
+experiments/results/
+
+# 测试
 test/
+
+# 开发记录
 开发记录/
+
+# 生成的大文件（按需）
+# knowledge_graph/structured_articles.json

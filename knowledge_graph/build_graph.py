@@ -33,16 +33,16 @@ def extract_entities(text: str) -> List[Tuple[str, str]]:
     """用 spaCy NER 抽取实体，返回 [(name, type), ...]，过滤无关类型。"""
     if _nlp is None:
         return []
-    doc = _nlp(text)
+    doc: Any = _nlp(text)
     out: List[Tuple[str, str]] = []
-    seen: set = set()
+    seen: set[Tuple[str, str]] = set()
     for ent in doc.ents:
         if ent.label_ not in ENTITY_TYPES:
             continue
-        name = ent.text.strip()
+        name: str = ent.text.strip()
         if len(name) > 200:
             name = name[:200]
-        key = (name, ent.label_)
+        key: Tuple[str, str] = (name, ent.label_)
         if key in seen:
             continue
         seen.add(key)
@@ -69,13 +69,13 @@ def create_constraints(tx: Any) -> None:
 
 
 def import_article(tx: Any, article: Dict[str, Any]) -> None:
-    title = article.get("title", "")
+    title: str = article.get("title", "")
     if not title:
         return
     tx.run("MERGE (a:Article {title: $title})", title=title)
     for sent in article.get("sentences", []):
-        text = sent.get("text", "").strip()
-        sent_id = sent.get("sent_id", 0)
+        text: str = sent.get("text", "").strip()
+        sent_id: int = sent.get("sent_id", 0)
         if not text:
             continue
         tx.run(
@@ -88,7 +88,7 @@ def import_article(tx: Any, article: Dict[str, Any]) -> None:
             sent_id=sent_id,
             text=text[:500],
         )
-        entities = extract_entities(text)
+        entities: List[Tuple[str, str]] = extract_entities(text)
         for name, etype in entities:
             tx.run(
                 """
@@ -105,10 +105,10 @@ def import_article(tx: Any, article: Dict[str, Any]) -> None:
 
 
 def import_question(tx: Any, q: Dict[str, Any]) -> None:
-    qid = q.get("question_id", "")
-    text = q.get("text", "")
-    answer = q.get("answer", "")
-    ref_articles = q.get("ref_articles", [])
+    qid: str = q.get("question_id", "")
+    text: str = q.get("text", "")
+    answer: str = q.get("answer", "")
+    ref_articles: List[str] = q.get("ref_articles", [])
     if not qid:
         return
     tx.run(
@@ -132,7 +132,7 @@ def import_question(tx: Any, q: Dict[str, Any]) -> None:
 def create_co_occurs(tx: Any, questions: List[Dict[str, Any]]) -> None:
     """同一问题的多篇文章建立 CO_OCCURS_WITH。"""
     for q in questions:
-        refs = q.get("ref_articles", [])
+        refs: List[str] = q.get("ref_articles", [])
         for i, t1 in enumerate(refs):
             for t2 in refs[i + 1 :]:
                 tx.run(
@@ -147,11 +147,15 @@ def create_co_occurs(tx: Any, questions: List[Dict[str, Any]]) -> None:
 
 
 def print_stats(session: Any) -> None:
-    r = session.run("MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY cnt DESC")
+    r: Any = session.run(
+        "MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY cnt DESC"
+    )
     print("\n--- Graph Statistics ---")
     for rec in r:
         print(f"  {rec['label']}: {rec['cnt']}")
-    r = session.run("MATCH ()-[r]->() RETURN type(r) AS rel, count(r) AS cnt ORDER BY cnt DESC")
+    r = session.run(
+        "MATCH ()-[r]->() RETURN type(r) AS rel, count(r) AS cnt ORDER BY cnt DESC"
+    )
     for rec in r:
         print(f"  {rec['rel']}: {rec['cnt']}")
 
@@ -168,18 +172,22 @@ def main() -> None:
         print("Proceeding without Entity extraction.")
         _nlp = None
 
-    base_dir = Path(__file__).resolve().parent
-    input_path = base_dir / "structured_articles.json"
+    base_dir: Path = Path(__file__).resolve().parent
+    input_path: Path = base_dir / "structured_articles.json"
     if not input_path.exists():
         print("Error: structured_articles.json not found. Run build_hotpot_articles.py first.")
         return
 
-    data = json.loads(input_path.read_text(encoding="utf-8"))
-    articles = data.get("articles", [])
-    questions = data.get("questions", [])
+    data: Dict[str, Any] = json.loads(
+        input_path.read_text(encoding="utf-8")
+    )
+    articles: List[Dict[str, Any]] = data.get("articles", [])
+    questions: List[Dict[str, Any]] = data.get("questions", [])
 
     print(f"Connecting to Neo4j at {NEO4J_URI}...")
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    driver: Any = GraphDatabase.driver(
+        NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)
+    )
     try:
         driver.verify_connectivity()
     except Exception as e:

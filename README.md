@@ -1,113 +1,154 @@
-# HotpotQA 多跳问答 Agent 系统
+# 工业设备故障诊断 RAG Agent
 
-基于 **RAG + ReAct** 架构的维基百科多跳问答系统，使用 HotpotQA 数据集。自研编排框架（未使用 LangChain），支持知识检索（RAG）、历史问答查询（SQL）、文章图谱多跳推理（Neo4j）、数学计算四种工具。
-
-## 架构
-
-```
-                         POST /chat
-                             │
-                      ┌──────▼──────┐
-                      │   Gateway   │  FastAPI + SessionStore
-                      └──────┬──────┘
-                             │
-                      ┌──────▼──────┐
-                      │ Orchestrator│  ReAct 循环（最多 10 步）
-                      └──┬──────┬───┘
-                         │      │
-              ┌──────────▼┐    ┌▼───────────┐
-              │  Planner  │    │  Executor   │
-              │ (DeepSeek)│    │ (工具分发)  │
-              └───────────┘    └──┬───┬───┬──┘
-                                  │   │   │
-                  ┌───────────────┘   │   └───────────────┐
-                  │                   │                   │
-          ┌───────▼───────┐  ┌───────▼───────┐  ┌────────▼───────┐
-          │search_knowledge│  │  calculator   │  │query_qa_records│
-          │  (RAG 检索)    │  │  (数学计算)   │  │search_article_ │
-          └───────┬───────┘  └───────────────┘  │  graph (KG)    │
-                  │                             └────┬─────┬─────┘
-          ┌───────▼───────┐                   ┌──────▼─┐ ┌▼──────┐
-          │   ChromaDB    │                   │ SQLite │ │ Neo4j │
-          │ + MiniLM 向量 │                   │qa_records│ │Article│
-          └───────────────┘                   └────────┘ └───────┘
-```
-
-**单轮数据流：** 用户消息 → Gateway 路由到会话 → Orchestrator 启动 ReAct 循环 → Planner 调用 DeepSeek 生成工具调用 → Executor 分发执行 → 工具结果回填对话 → 循环直到 LLM 输出最终回答。
+面向工业设备的故障诊断智能问答系统，结合 RAG（ChromaDB + SentenceTransformer）、知识图谱（Neo4j）和 Reranker（CrossEncoder），通过 Function Calling 实现多步检索与推理。**HotpotQA 仅用于验证与测试**（多跳推理能力、检索质量评估），实际场景可切换为工业知识库。
 
 ## 技术栈
 
-| 组件 | 选型 | 选型理由 |
-|------|------|----------|
-| LLM | DeepSeek | 支持 function calling，成本低 |
-| Embedding | paraphrase-multilingual-MiniLM-L12-v2 | 多语言支持，适配 HotpotQA 英文 |
-| 向量数据库 | ChromaDB | 轻量、内嵌，适合原型与单机部署 |
-| 结构化存储 | SQLite | 零配置，qa_records 历史问答 |
-| API 框架 | FastAPI | 异步高性能，自动生成 OpenAPI 文档 |
-
-## 快速开始
-
-```bash
-# 1. 安装依赖
-pip install -r requirements.txt
-
-# 2. 设置 API Key
-export DEEPSEEK_API_KEY="your-key-here"
-
-# 3. 初始化数据库（qa_records）
-python init_db.py
-
-# 4. 启动服务（按顺序）
-# ① Embedding 服务（8011，必须先起）
-uvicorn embedding.embedding:app --host 0.0.0.0 --port 8011
-
-# ② RAG 服务（8010），依赖 embedding
-uvicorn rag.rag_pipeline:app --host 0.0.0.0 --port 8010
-
-# ③ Gateway（8000）
-uvicorn gateway.gateway:app --host 0.0.0.0 --port 8000
-```
-
-## API
-
-```bash
-# 健康检查
-curl http://localhost:8000/health
-
-# 对话
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "In what year was Moscow State University founded?", "session_id": "s1"}'
-```
-
-**请求/响应格式：**
-
-```json
-// Request
-{"message": "string", "session_id": "string (可选，自动生成)"}
-
-// Response
-{"reply": "string", "session_id": "string", "turn_id": 1}
-```
+- **RAG**：ChromaDB、SentenceTransformer、min-max 归一化
+- **Reranker**：cross-encoder/ms-marco-MiniLM-L-12-v2
+- **LLM**：DeepSeek
+- **知识图谱**：Neo4j
+- **Web**：FastAPI
+- 自研架构，未使用 LangChain
 
 ## 项目结构
 
-```
-├── gateway/           # FastAPI 入口 + 会话管理
-├── orchestrator/      # ReAct 循环编排
-├── planner/           # LLM 调用 + tool_calls 解析
-├── executor/          # 工具分发执行
-├── tools/             # 工具实现 + OpenAI function schema
-├── rag/               # 分块、索引、检索（min-max 归一化）
-├── embedding/         # Embedding 微服务
-├── config/            # 统一配置（config.yaml）
-├── state/             # 会话状态日志
-└── knowledge_graph/   # 知识图谱构建（开发中）
+| 模块 | 职责 |
+|------|------|
+| `gateway` | FastAPI 入口，`/chat`、SessionStore |
+| `orchestrator` | 多步工具调用循环，调 planner + executor |
+| `planner` | 调用 LLM，解析 tool_calls |
+| `executor` | 执行 TOOL_REGISTRY 中的工具 |
+| `tools` | search_knowledge、calculator、query_qa_records、search_article_graph |
+| `rag` | 分块、索引、检索、Reranker、KG 融合 |
+| `embedding` | 向量化服务（独立进程） |
+| `knowledge_graph` | 构建 structured_articles 与 Neo4j 图谱（测试阶段从 HotpotQA 生成） |
+
+## 环境要求
+
+- Python 3.10+
+- 环境变量：`DEEPSEEK_API_KEY`（必需）
+- 可选：`REDIS_URL`（会话存储）
+
+```bash
+pip install -r requirements.txt
 ```
 
-## 设计决策
+## 服务与端口
 
-- **自研编排而非 LangChain**：保持对 ReAct 循环、工具调用、对话管理的完全控制，便于调试和定制。
-- **min-max 归一化**：ChromaDB 返回的原始距离因 metric 不同尺度各异，归一化后统一到 [0, 1] 区间，使 `score_threshold` 配置在不同 distance metric 下通用。候选池扩大到 `3×top_k` 避免末位归一化恒为 0。
-- **工具统一契约**：所有工具返回 `{ok, code, message, payload, latency_ms}` 结构，Executor 无需关心具体工具实现。
-- **独立 Embedding 服务**：RAG 索引与检索均通过 `http://localhost:8011/embed` 调用，不加载本地模型。本地调试时须先启动 embedding（8011），再启动 RAG（8010）。
+| 端口 | 服务 | 命令 | 依赖 |
+|------|------|------|------|
+| 8011 | Embedding | `uvicorn embedding.embedding:app --host 0.0.0.0 --port 8011` | 无 |
+| 8010 | RAG | `uvicorn rag.rag_pipeline:app --host 0.0.0.0 --port 8010` | 8011 |
+| 8000 | Gateway | `uvicorn gateway.gateway:app --host 0.0.0.0 --port 8000` | 8010, 8011 |
+| 7687 | Neo4j | `docker-compose up -d` | 可选（KG 检索需要） |
+
+**启动顺序**：先 8011（Embedding），再 8010（RAG），最后 8000（Gateway）。
+
+## 手动启动（推荐）
+
+```powershell
+# 终端 1：Embedding（必须先启动）
+python -m uvicorn embedding.embedding:app --host 0.0.0.0 --port 8011
+
+# 终端 2：RAG
+python -m uvicorn rag.rag_pipeline:app --host 0.0.0.0 --port 8010
+
+# 终端 3：Gateway
+python -m uvicorn gateway.gateway:app --host 0.0.0.0 --port 8000
+```
+
+Neo4j（可选，用于 rag_kg_reranker）：
+
+```powershell
+docker-compose up -d
+```
+
+## 一键启动（Windows）
+
+```powershell
+.\start\start_services.ps1
+# 跳过 Neo4j：.\start\start_services.ps1 -SkipDocker
+```
+
+## 初始化
+
+```bash
+# 初始化 qa_records 数据库（测试用：优先从 hotpotqa_db_seed.json，否则从 HotpotQA 采样）
+python init_db.py
+```
+
+## 知识图谱（可选）
+
+测试阶段使用 HotpotQA 生成图谱：
+
+```bash
+# 1. 从 HotpotQA 生成 structured_articles.json（仅测试用）
+python knowledge_graph/build_hotpot_articles.py
+
+# 2. 安装 spaCy 英文模型
+pip install spacy && python -m spacy download en_core_web_sm
+
+# 3. 确保 Neo4j 已启动，导入图谱
+python knowledge_graph/build_graph.py
+```
+
+## API 使用
+
+### 健康检查
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8011/health
+curl http://localhost:8010/reranker_status
+```
+
+### 对话
+
+```bash
+# 测试用示例（HotpotQA 风格问题）
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "In what year was Moscow State University founded?", "session_id": "test-1"}'
+```
+
+### RAG 检索（直接调用）
+
+```bash
+curl -X POST http://localhost:8010/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Moscow State University", "use_reranker": true, "use_kg": true}'
+```
+
+## 实验：RAG+Reranker vs RAG+KG+Reranker
+
+对比 `rag_reranker` 与 `rag_kg_reranker` 的检索质量（hit@k、recall@k、precision@k、mrr、ndcg、map、coverage）。
+
+**前置条件**：Embedding(8011)、RAG(8010) 已启动；跑 `rag_kg_reranker` 时需 Neo4j 已启动并导入图谱。
+
+```bash
+# 默认 50 样本，8 workers
+python experiments/run_reranker_experiment.py
+
+# 自定义
+python experiments/run_reranker_experiment.py --max-samples 100 --workers 16
+python experiments/run_reranker_experiment.py --variant rag_reranker  # 仅跑单一变体
+```
+
+结果输出到 `experiments/results/reranker_summary.json`。
+
+## 配置
+
+主配置在 `config/config.yaml`：
+
+- `rag.top_k`：检索返回数量（默认 30）
+- `rag.use_kg`：是否默认启用 KG 检索
+- `reranker.enabled`：是否启用 Reranker
+- `paths.knowledge_file`：知识库文件（测试用 `data/hotpot_knowledge.txt`，工业场景可替换）
+- `neo4j`：Neo4j 连接信息
+
+## 数据契约
+
+- **PlanAction**：`{tool_name, tool_args, tool_call_id}`
+- **ToolResult**：`{ok, code, message, payload, latency_ms, tool_name}`
+- **ChatRequest/ChatResponse**：`{message, session_id}` / `{reply, session_id, turn_id}`

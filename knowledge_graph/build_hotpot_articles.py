@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 OUTPUT_FILE = Path(__file__).resolve().parent / "structured_articles.json"
 MAX_SAMPLES = 300  # 控制规模
@@ -26,16 +27,18 @@ def main() -> None:
         sys.exit(1)
 
     print("加载 HotpotQA distractor validation...")
-    ds = load_dataset("hotpot_qa", "distractor", split="validation", trust_remote_code=False)
+    ds: Any = load_dataset(
+        "hotpot_qa", "distractor", split="validation", trust_remote_code=False
+    )
 
     articles_map: dict[str, list[dict]] = {}  # title -> [{sent_id, text}]
     questions: list[dict] = []
 
     for i in range(min(MAX_SAMPLES, len(ds))):
-        sample = ds[i]
-        ctx_titles = sample["context"]["title"]
-        ctx_sentences = sample["context"]["sentences"]
-        sf_titles = sample["supporting_facts"]["title"]
+        sample: dict = ds[i]
+        ctx_titles: list = sample["context"]["title"]
+        ctx_sentences: list = sample["context"]["sentences"]
+        sf_titles: list = sample["supporting_facts"]["title"]
 
         for title, sents in zip(ctx_titles, ctx_sentences):
             if title not in articles_map:
@@ -51,7 +54,7 @@ def main() -> None:
             "ref_articles": list(dict.fromkeys(sf_titles)),
         })
 
-    result = {
+    result: dict = {
         "articles": [{"title": t, "sentences": s} for t, s in articles_map.items()],
         "questions": questions,
     }

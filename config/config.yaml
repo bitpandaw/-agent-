@@ -1,27 +1,67 @@
+# =============================================================================
+# Query Translation（问题翻译）
+# =============================================================================
+query_translation_model:
+  enabled: true
+  provider: "deepseek"
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com/v1"
+  api_key_env: "DEEPSEEK_API_KEY"
+  # 翻译调用的 system prompt，与主对话的 system_prompt 不同
+  system_prompt: "你是一个翻译助手。将用户的中文问题翻译成英文。只输出英文翻译结果，不要解释、不要加引号。"
+
+# =============================================================================
+# Redis（会话存储）
+# =============================================================================
 redis:
-  url_env: "REDIS_URL"  # 环境变量名，如 redis://localhost:6379
+  url_env: "REDIS_URL"
   default_url: "redis://localhost:6379"
 
+# =============================================================================
+# Embedding（向量化）
+# =============================================================================
 embedding:
   provider: "sentence_transformers"
   model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
   cache_dir: ".hf_cache"
+
+# =============================================================================
+# RAG（检索增强）
+# =============================================================================
 rag:
   top_k: 4
   score_threshold: 0.3
   collection_name: "default"
   distance: "cosine"  # l2 | cosine | ip
+
+# =============================================================================
+# LLM（主对话模型）
+# =============================================================================
 llm:
   provider: "deepseek"
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
   api_key_env: "DEEPSEEK_API_KEY"
-  system_prompt: "你是一个维基百科多跳问答助手。当用户提问时，使用 search_knowledge 从知识库检索相关文章，使用 query_qa_records 查询历史问答，使用 search_article_graph 做多跳关联推理，然后基于检索到的内容给出准确回答。"
+  system_prompt: "你是一个多跳问答助手，基于HotpotQA数据集构建的知识库，支持跨文档的多步推理检索。"
+
+# =============================================================================
+# Neo4j（知识图谱）
+# =============================================================================
 neo4j:
   uri: "bolt://localhost:7687"
   user: "neo4j"
   password: "u152142445"
 
+# =============================================================================
+# Reranker（精排模型，仅用于 RAG 检索）
+# =============================================================================
+reranker:
+  enabled: true
+  model: "cross-encoder/ms-marco-MiniLM-L-12-v2"
+
+# =============================================================================
+# Paths（文件路径）
+# =============================================================================
 paths:
   db: "hotpot.db"
   knowledge_file: "data/hotpot_knowledge.txt"

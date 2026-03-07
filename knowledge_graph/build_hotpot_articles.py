@@ -1,5 +1,4 @@
-"""
-从 HotpotQA 构建 structured_articles.json，供 build_graph.py 导入 Neo4j。
+"""从 HotpotQA 构建 structured_articles.json，供 build_graph.py 导入 Neo4j。
 
 输出结构:
   - articles: [{title, sentences: [{sent_id, text}]}]
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 OUTPUT_FILE = Path(__file__).resolve().parent / "structured_articles.json"
-MAX_SAMPLES = 300  # 控制规模
+
 
 
 def main() -> None:
@@ -26,15 +25,15 @@ def main() -> None:
         print("Error: pip install datasets")
         sys.exit(1)
 
-    print("加载 HotpotQA distractor validation...")
+    print("加载 HotpotQA distractor validation（全量）...")
     ds: Any = load_dataset(
         "hotpot_qa", "distractor", split="validation", trust_remote_code=False
     )
 
-    articles_map: dict[str, list[dict]] = {}  # title -> [{sent_id, text}]
-    questions: list[dict] = []
+    articles_map: dict[str, list[dict[str, Any]]] = {}
+    questions: list[dict[str, Any]] = []
 
-    for i in range(min(MAX_SAMPLES, len(ds))):
+    for i in range(len(ds)):
         sample: dict = ds[i]
         ctx_titles: list = sample["context"]["title"]
         ctx_sentences: list = sample["context"]["sentences"]
@@ -52,13 +51,18 @@ def main() -> None:
             "text": sample["question"],
             "answer": sample["answer"],
             "ref_articles": list(dict.fromkeys(sf_titles)),
+            "context_titles": list(ctx_titles),
         })
+        if (i + 1) % 1000 == 0:
+            print(f"  已处理 {i + 1}/{len(ds)} 样本...")
 
-    result: dict = {
+    result: dict[str, Any] = {
         "articles": [{"title": t, "sentences": s} for t, s in articles_map.items()],
         "questions": questions,
     }
-    OUTPUT_FILE.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    OUTPUT_FILE.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"完成: {len(articles_map)} 篇文章, {len(questions)} 个问题 -> {OUTPUT_FILE}")
 
 

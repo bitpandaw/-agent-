@@ -1,0 +1,4 @@
+# Ragas RAG 对照实验依赖
+ragas>=0.2.0
+datasets>=2.14.0
+httpx>=0.24.0

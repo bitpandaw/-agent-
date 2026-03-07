@@ -1,26 +1,24 @@
-"""RAG Pipeline 服务：向量检索 + KG + Reranker。"""
+"""RAG Pipeline 服务：纯向量检索，Reranker/KG 为独立模块。"""
 
 import os
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import chromadb
 import httpx
 from fastapi import FastAPI
-from langdetect import LangDetectException, detect
+from langdetect import detect
 from openai import OpenAI
 from pydantic import BaseModel
 
+from rag.produce_chunk import init_chunks
 from config.config_loader import config
-from knowledge_graph.kg_retriever import extract_entities, fetch_docs
-
-if TYPE_CHECKING:
-    from sentence_transformers import CrossEncoder
+from knowledge_graph.kg_retrieve import retrieve_kg
+from reranker import apply_reranker, get_reranker, is_loaded
 
 
 class RetrieveRequest(BaseModel):
     query: str
     use_reranker: Optional[bool] = None  # None = use config, True/False = override
-    use_kg: Optional[bool] = None  # None = use config, True/False = override
 
 
 app = FastAPI()
@@ -36,18 +34,6 @@ def startup_event() -> None:
         )
     else:
         app.state.client = None
-
-    reranker_cfg: dict[str, Any] = config.get("reranker", {}) or {}
-    if reranker_cfg.get("enabled", False) and reranker_cfg.get("model"):
-        try:
-            from sentence_transformers import CrossEncoder
-
-            app.state.reranker = CrossEncoder(reranker_cfg["model"])
-        except Exception as e:
-            print(f"Warning: Reranker load failed: {e}, disabling.")
-            app.state.reranker = None
-    else:
-        app.state.reranker = None
 
     filepath: str = config["paths"]["knowledge_file"]
     app.state.embed_url = os.environ.get(
@@ -65,9 +51,7 @@ def startup_event() -> None:
         return  # 已有索引，跳过重建
     with open(filepath, "r", encoding="utf-8") as f:
         content: str = f.read()
-    chunks: list[str] = [
-        chunk.strip() for chunk in content.split("\n\n") if chunk.strip()
-    ]
+    chunks: list[str] = init_chunks(content)
     embed_url: str = app.state.embed_url
     batch_size: int = 64
     for i in range(0, len(chunks), batch_size):
@@ -95,27 +79,17 @@ def _embed_query(query: str) -> list[float]:
     )
     resp.raise_for_status()
     return resp.json()["vectors"][0]
-
-def _embed_texts(texts: list[str]) -> list[list[float]]:
-    if not texts:
-        return []
-    resp: httpx.Response = httpx.post(
-        f"{app.state.embed_url.rstrip('/')}/embed",
-        json={"texts": texts},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()["vectors"]
-
 @app.get("/reranker_status")
 def reranker_status() -> dict[str, Any]:
     """检查 Reranker 是否已加载。"""
-    loaded = getattr(app.state, "reranker", None) is not None
-    return {"reranker_loaded": loaded}
+    return {"reranker_loaded": is_loaded()}
 
 
 @app.get("/translate")
 def translate_chinese(query: str) -> str:
+    if not detect(query) in ("zh-cn", "zh"):
+        return query 
+
     """将中文查询翻译为英文。"""
     response: Any = app.state.client.chat.completions.create(
         model=config["query_translation_model"]["model"],
@@ -127,77 +101,19 @@ def translate_chinese(query: str) -> str:
     return response.choices[0].message.content
 
 
-def is_chinese(text: str) -> bool:
-    """检测文本是否为中文。"""
-    if not text or not text.strip():
-        return False
-    try:
-        return detect(text) in ("zh-cn", "zh")
-    except LangDetectException:
-        return False
-
-
-def _apply_reranker(
-    query: str,
-    candidates: list[dict[str, Any]],
-    top_k: int,
-    reranker: Optional["CrossEncoder"],
-) -> list[dict[str, Any]]:
-    """对候选做 Reranker 精排，返回 top_k。"""
-    if not candidates or reranker is None:
-        return candidates[:top_k]
-    pairs: list[tuple[str, str]] = [
-        (query, c["text"][:512]) for c in candidates
-    ]
-    scores: Any = reranker.predict(pairs)
-    if hasattr(scores, "tolist"):
-        scores = scores.tolist()
-    indexed: list[tuple[dict[str, Any], Any]] = list(
-        zip(candidates, scores)
-    )
-    indexed.sort(key=lambda x: x[1], reverse=True)
-    reranked: list[dict[str, Any]] = [c for c, _ in indexed[:top_k]]
-    for i, r in enumerate(reranked):
-        r["score"] = float(indexed[i][1]) if i < len(indexed) else 0.0
-    return reranked
-
-
-def _merge_unique(base: list[dict[str, Any]], extra: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """按文本前缀去重合并。"""
-    seen = {d.get("text", "")[:100] for d in base}
-    merged = list(base)
-    for d in extra:
-        key = d.get("text", "")[:100]
-        if key not in seen:
-            merged.append(d)
-            seen.add(key)
-    return merged
-
 
 @app.post("/retrieve")
 def retrieve_context(req: RetrieveRequest) -> list[dict[str, Any]]:
-    """检索时多取候选再做归一化，可选 Reranker 精排。"""
-    score_threshold: float = config["rag"]["score_threshold"]
+    """检索时按距离排序（距离越小越相似），可选 Reranker 精排。纯向量检索，不含 KG。"""
     query: str = req.query
     use_reranker: Optional[bool] = req.use_reranker
     if use_reranker is None:
         use_reranker = (config.get("reranker") or {}).get("enabled", False)
-    use_kg: Optional[bool] = req.use_kg
-    if use_kg is None:
-        use_kg = (config.get("rag") or {}).get("use_kg", False)
-    kg_cfg: dict[str, Any] = (config.get("rag") or {}).get("kg", {}) or {}
 
-    query_en: str
-    if config.get("query_translation_model", {}).get("enabled", False) and is_chinese(query):
-        query_en = translate_chinese(query)
-    else:
-        query_en = query
-
+    query_en: str = translate_chinese(query)
     query_embedding: list[float] = _embed_query(query_en)
     top_k: int = config["rag"]["top_k"]
-    reranker: Optional["CrossEncoder"] = (
-        getattr(app.state, "reranker", None) if use_reranker else None
-    )
+    reranker = get_reranker() if use_reranker else None
     n_candidates: int = max(20, top_k * 5) if reranker else max(10, top_k * 3)
 
     results: dict[str, Any] = app.state.collection.query(
@@ -210,49 +126,30 @@ def retrieve_context(req: RetrieveRequest) -> list[dict[str, Any]]:
     if not distances:
         return []
 
-    d_min: float = min(distances)
-    d_max: float = max(distances)
-    eps: float = 1e-8
     candidates: list[dict[str, Any]] = []
     for i, distance in enumerate(distances):
-        norm: float = (d_max - distance) / (d_max - d_min + eps)
-        if reranker or norm >= score_threshold:
-            candidates.append({
-                "doc_id": ids[i] if i < len(ids) else None,
-                "text": documents[i],
-                "score": norm,
-            })
+        candidates.append({
+            "doc_id": ids[i] if i < len(ids) else None,
+            "text": documents[i],
+            "score": -distance,
+        })
     candidates = sorted(candidates, reverse=True, key=lambda x: x["score"])
-
-    if use_kg:
-        max_entities = int(kg_cfg.get("max_entities", 6))
-        max_keywords = int(kg_cfg.get("max_keywords", 6))
-        terms = extract_entities(query_en, max_entities, max_keywords)
-        kg_docs = fetch_docs(terms, kg_cfg)
-        if kg_docs:
-            kg_texts = [d.get("text", "") for d in kg_docs]
-            kg_vectors = _embed_texts(kg_texts)
-            metric = config["rag"].get("distance", "l2")
-            dists = [
-                _distance(query_embedding, vec, metric) for vec in kg_vectors
-            ]
-            if dists:
-                d_min_kg = min(dists)
-                d_max_kg = max(dists)
-                eps_kg = 1e-8
-                for d, dist in zip(kg_docs, dists):
-                    d["score"] = (d_max_kg - dist) / (d_max_kg - d_min_kg + eps_kg)
-            if not reranker:
-                kg_docs = [
-                    d for d in kg_docs
-                    if d.get("score", 0.0) >= score_threshold
-                ]
-        candidates = _merge_unique(candidates, kg_docs)
 
     if reranker:
-        return _apply_reranker(query_en, candidates, top_k, reranker)
-    candidates = sorted(candidates, reverse=True, key=lambda x: x["score"])
+        return apply_reranker(query_en, candidates, top_k, model=reranker)
     return candidates[:top_k]
+
+
+class KgRetrieveRequest(BaseModel):
+    query: str
+
+
+@app.post("/retrieve_kg")
+def retrieve_kg_endpoint(req: KgRetrieveRequest) -> list[dict[str, Any]]:
+    """KG 检索：按实体从 Neo4j 图谱取文档，独立于向量检索。"""
+    query_en: str = translate_chinese(req.query)
+    kg_top_k: int = config.get("kg", {}).get("top_k") or config["rag"]["top_k"] * 2
+    return retrieve_kg(query_en, top_k=kg_top_k)
 
 
 @app.post("/retrieve_raw")

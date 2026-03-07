@@ -34,11 +34,23 @@ embedding:
 # RAG（检索增强）
 # =============================================================================
 rag:
-  top_k: 30
+  top_k: 5
   score_threshold: 0.3
   collection_name: "default"
   distance: "cosine"  # l2 | cosine | ip
-  use_kg: true  # 与 HotpotQA/structured_articles 同源，默认启用 KG 检索
+
+# =============================================================================
+# KG（知识图谱检索，独立于 RAG）
+# =============================================================================
+kg:
+  top_k: 10
+  max_entities: 6
+  max_keywords: 6
+  hop1_limit: 30
+  hop2_limit: 40
+  chain_limit: 40
+  chain_sep: " [SEP] "
+  use_hop2: true
 
 # =============================================================================
 # LLM（主对话模型）

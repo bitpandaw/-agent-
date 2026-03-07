@@ -1,218 +1,146 @@
-"""从 structured_articles.json 导入 Neo4j，构建 HotpotQA 知识图谱。
+"""从 structured_articles.json 导入 Neo4j 知识图谱。
 
-节点：Article, Sentence, Question, Entity
-关系：CONTAINS, REFERENCES, CO_OCCURS_WITH, MENTIONS
+创建 Article、Sentence、Entity 节点及 CONTAINS、MENTIONS、CO_OCCURS_WITH 边。
+需先运行 build_hotpot_articles.py 生成 structured_articles.json。
 
-用法：
-  1. pip install spacy && python -m spacy download en_core_web_sm
-  2. python knowledge_graph/build_hotpot_articles.py  # 生成 structured_articles.json
-  3. 确保 Neo4j 已启动
-  4. python knowledge_graph/build_graph.py
+用法: python knowledge_graph/build_graph.py
 """
 
+from __future__ import annotations
+
 import json
-import os
+import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-import spacy
-from neo4j import GraphDatabase
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "u152142445")
-
-# spaCy 模型，main 中加载
-_nlp: Optional[Any] = None
-
-# 保留的实体类型（PERSON/ORG/GPE/LOC/FAC 等对多跳推理有用）
-ENTITY_TYPES = frozenset({"PERSON", "ORG", "GPE", "LOC", "FAC", "PRODUCT", "EVENT", "WORK_OF_ART"})
+INPUT_FILE = Path(__file__).resolve().parent / "structured_articles.json"
 
 
-def extract_entities(text: str) -> list[tuple[str, str]]:
-    """用 spaCy NER 抽取实体，返回 [(name, type), ...]，过滤无关类型。"""
+_nlp: Any = None
+
+
+def _get_nlp() -> Any:
+    global _nlp
     if _nlp is None:
+        try:
+            import spacy
+            _nlp = spacy.load("en_core_web_sm")
+        except (ImportError, OSError):
+            _nlp = False
+    return _nlp if _nlp else None
+
+
+def _extract_entities_spacy(text: str) -> list[str]:
+    """用 spaCy 抽取命名实体，返回去重的小写列表。"""
+    nlp = _get_nlp()
+    if nlp is None:
         return []
-    doc: Any = _nlp(text)
-    out: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    doc = nlp(text)
+    seen: set[str] = set()
+    out: list[str] = []
     for ent in doc.ents:
-        if ent.label_ not in ENTITY_TYPES:
-            continue
-        name: str = ent.text.strip()
-        if len(name) > 200:
-            name = name[:200]
-        key: tuple[str, str] = (name, ent.label_)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(key)
+        name = (ent.text or "").strip().lower()
+        if name and len(name) > 1 and name not in seen:
+            seen.add(name)
+            out.append(name)
     return out
 
 
-def clear_graph(tx: Any) -> None:
-    tx.run("MATCH (n) DETACH DELETE n")
+def main() -> None:
+    if not INPUT_FILE.exists():
+        print(f"Error: {INPUT_FILE} 不存在。请先运行 build_hotpot_articles.py")
+        sys.exit(1)
 
+    from config.config_loader import config
 
-def create_constraints(tx: Any) -> None:
-    for c in [
-        "CREATE CONSTRAINT IF NOT EXISTS FOR (a:Article) REQUIRE a.title IS UNIQUE",
-        "CREATE CONSTRAINT IF NOT EXISTS FOR (q:Question) REQUIRE q.question_id IS UNIQUE",
-        "CREATE CONSTRAINT entity_name_type IF NOT EXISTS FOR (e:Entity) "
-        "REQUIRE (e.name, e.type) IS UNIQUE",
-    ]:
-        try:
-            tx.run(c)
-        except Exception:
-            # Neo4j 旧版本可能不支持复合约束，忽略
-            pass
+    try:
+        from neo4j import GraphDatabase
+    except ImportError:
+        print("Error: pip install neo4j")
+        sys.exit(1)
 
+    data = json.loads(INPUT_FILE.read_text(encoding="utf-8"))
+    articles: list[dict] = data.get("articles", [])
+    questions: list[dict] = data.get("questions", [])
 
-def import_article(tx: Any, article: dict[str, Any]) -> None:
-    """导入文章到 Neo4j。"""
-    title: str = article.get("title", "")
-    if not title:
-        return
-    tx.run("MERGE (a:Article {title: $title})", title=title)
-    for sent in article.get("sentences", []):
-        text: str = sent.get("text", "").strip()
-        sent_id: int = sent.get("sent_id", 0)
-        if not text:
-            continue
-        tx.run(
-            """
-            MATCH (a:Article {title: $title})
-            CREATE (s:Sentence {sent_id: $sent_id, text: $text})
-            MERGE (a)-[:CONTAINS]->(s)
-            """,
-            title=title,
-            sent_id=sent_id,
-            text=text[:500],
-        )
-        entities: list[tuple[str, str]] = extract_entities(text)
-        for name, etype in entities:
-            tx.run(
-                """
-                MERGE (e:Entity {name: $name, type: $type})
-                WITH e
-                MATCH (a:Article {title: $title})-[:CONTAINS]->(s:Sentence {sent_id: $sent_id})
-                MERGE (s)-[:MENTIONS]->(e)
-                """,
-                name=name,
-                type=etype,
-                title=title,
-                sent_id=sent_id,
-            )
-
-
-def import_question(tx: Any, q: dict[str, Any]) -> None:
-    """导入问题到 Neo4j。"""
-    qid: str = q.get("question_id", "")
-    text: str = q.get("text", "")
-    answer: str = q.get("answer", "")
-    ref_articles: list[str] = q.get("ref_articles", [])
-    if not qid:
-        return
-    tx.run(
-        "MERGE (q:Question {question_id: $qid}) SET q.text = $text, q.answer = $answer",
-        qid=qid,
-        text=text[:1000],
-        answer=answer[:200],
+    cfg = config["neo4j"]
+    driver = GraphDatabase.driver(
+        cfg["uri"], auth=(cfg["user"], cfg["password"])
     )
-    for t in ref_articles:
-        tx.run(
-            """
-            MATCH (q:Question {question_id: $qid})
-            MATCH (a:Article {title: $title})
-            MERGE (q)-[:REFERENCES]->(a)
-            """,
-            qid=qid,
-            title=t,
-        )
 
+    print("清空现有图数据...")
+    with driver.session() as session:
+        session.execute_write(lambda tx: tx.run("MATCH (n) DETACH DELETE n"))
 
-def create_co_occurs(tx: Any, questions: list[dict[str, Any]]) -> None:
-    """同一问题的多篇文章建立 CO_OCCURS_WITH。"""
+    print(f"创建 {len(articles)} 篇文章、Sentence、Entity 及 CO_OCCURS_WITH...")
+    with driver.session() as session:
+        for idx, art in enumerate(articles):
+            title = art.get("title", "").strip()
+            if not title:
+                continue
+            session.execute_write(
+                lambda tx: tx.run("MERGE (a:Article {title: $title})", {"title": title})
+            )
+            for sent in art.get("sentences", []):
+                text = (sent.get("text") or "").strip()
+                if not text:
+                    continue
+                session.execute_write(
+                    lambda tx, t=title, txt=text: tx.run(
+                        """
+                        MATCH (a:Article {title: $title})
+                        MERGE (s:Sentence {text: $text})
+                        MERGE (a)-[:CONTAINS]->(s)
+                        """,
+                        {"title": t, "text": txt},
+                    )
+                )
+                entities = _extract_entities_spacy(text)
+                for ent_name in entities:
+                    session.execute_write(
+                        lambda tx, n=ent_name, txt=text: tx.run(
+                            """
+                            MERGE (e:Entity {name: $name})
+                            WITH e
+                            MATCH (s:Sentence {text: $text})
+                            MERGE (s)-[:MENTIONS]->(e)
+                            """,
+                            {"name": n, "text": txt},
+                        )
+                    )
+            if (idx + 1) % 1000 == 0:
+                print(f"  已处理 {idx + 1}/{len(articles)} 篇文章...")
+
+    print("创建 CO_OCCURS_WITH 边...")
+    co_occurs: set[tuple[str, str]] = set()
     for q in questions:
-        refs: list[str] = q.get("ref_articles", [])
-        for i, t1 in enumerate(refs):
-            for t2 in refs[i + 1 :]:
-                tx.run(
+        titles = q.get("context_titles") or q.get("ref_articles") or []
+        titles = [t.strip() for t in titles if t and isinstance(t, str)]
+        for i in range(len(titles)):
+            for j in range(i + 1, len(titles)):
+                a, b = titles[i], titles[j]
+                if a != b:
+                    co_occurs.add((min(a, b), max(a, b)))
+    co_list = list(co_occurs)
+    with driver.session() as session:
+        for i, (a1, a2) in enumerate(co_list):
+            session.execute_write(
+                lambda tx, x=a1, y=a2: tx.run(
                     """
-                    MATCH (a1:Article {title: $t1})
-                    MATCH (a2:Article {title: $t2})
+                    MATCH (a1:Article {title: $a1}), (a2:Article {title: $a2})
+                    WHERE a1 <> a2
                     MERGE (a1)-[:CO_OCCURS_WITH]->(a2)
                     """,
-                    t1=t1,
-                    t2=t2,
+                    {"a1": x, "a2": y},
                 )
-
-
-def print_stats(session: Any) -> None:
-    r: Any = session.run(
-        "MATCH (n) RETURN labels(n)[0] AS label, count(n) AS cnt ORDER BY cnt DESC"
-    )
-    print("\n--- Graph Statistics ---")
-    for rec in r:
-        print(f"  {rec['label']}: {rec['cnt']}")
-    r = session.run(
-        "MATCH ()-[r]->() RETURN type(r) AS rel, count(r) AS cnt ORDER BY cnt DESC"
-    )
-    for rec in r:
-        print(f"  {rec['rel']}: {rec['cnt']}")
-
-
-def main() -> None:
-    global _nlp
-    try:
-        _nlp = spacy.load("en_core_web_sm")
-        print("Loaded spaCy model en_core_web_sm for NER.")
-    except OSError:
-        print(
-            "Warning: en_core_web_sm not found. Run: python -m spacy download en_core_web_sm"
-        )
-        print("Proceeding without Entity extraction.")
-        _nlp = None
-
-    base_dir: Path = Path(__file__).resolve().parent
-    input_path: Path = base_dir / "structured_articles.json"
-    if not input_path.exists():
-        print("Error: structured_articles.json not found. Run build_hotpot_articles.py first.")
-        return
-
-    data: dict[str, Any] = json.loads(
-        input_path.read_text(encoding="utf-8")
-    )
-    articles: list[dict[str, Any]] = data.get("articles", [])
-    questions: list[dict[str, Any]] = data.get("questions", [])
-
-    print(f"Connecting to Neo4j at {NEO4J_URI}...")
-    driver: Any = GraphDatabase.driver(
-        NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)
-    )
-    try:
-        driver.verify_connectivity()
-    except Exception as e:
-        print(f"Error: Cannot connect to Neo4j: {e}")
-        return
-
-    with driver.session() as session:
-        session.execute_write(clear_graph)
-        session.execute_write(create_constraints)
-        print(f"Importing {len(articles)} articles...")
-        for i, a in enumerate(articles):
-            session.execute_write(import_article, a)
-            if (i + 1) % 100 == 0:
-                print(f"  [{i + 1}/{len(articles)}]")
-        print(f"Importing {len(questions)} questions...")
-        for q in questions:
-            session.execute_write(import_question, q)
-        print("Creating CO_OCCURS_WITH...")
-        session.execute_write(create_co_occurs, questions)
-        print_stats(session)
-
+            )
+            if (i + 1) % 5000 == 0:
+                print(f"  已创建 {i + 1}/{len(co_list)} 条 CO_OCCURS_WITH 边...")
     driver.close()
-    print("\nDone. Open http://localhost:7474 to explore.")
+    print(f"完成: {len(articles)} 篇文章, {len(co_occurs)} 条 CO_OCCURS_WITH 边")
 
 
 if __name__ == "__main__":

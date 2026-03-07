@@ -1,15 +1,17 @@
+"""RAG Pipeline 服务：向量检索 + KG + Reranker。"""
+
 import os
 from typing import TYPE_CHECKING, Any, Optional
 
+import chromadb
+import httpx
 from fastapi import FastAPI
 from langdetect import LangDetectException, detect
 from openai import OpenAI
 from pydantic import BaseModel
 
-import chromadb
-import httpx
-
 from config.config_loader import config
+from knowledge_graph.kg_retriever import extract_entities, fetch_docs
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
@@ -94,6 +96,17 @@ def _embed_query(query: str) -> list[float]:
     resp.raise_for_status()
     return resp.json()["vectors"][0]
 
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
+    resp: httpx.Response = httpx.post(
+        f"{app.state.embed_url.rstrip('/')}/embed",
+        json={"texts": texts},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()["vectors"]
+
 @app.get("/reranker_status")
 def reranker_status() -> dict[str, Any]:
     """检查 Reranker 是否已加载。"""
@@ -103,21 +116,27 @@ def reranker_status() -> dict[str, Any]:
 
 @app.get("/translate")
 def translate_chinese(query: str) -> str:
+    """将中文查询翻译为英文。"""
     response: Any = app.state.client.chat.completions.create(
-                model=config["query_translation_model"]["model"],
-                messages = [
-                    {"role":"system","content":config["query_translation_model"]["system_prompt"]},
-                    {"role":"user","content":query}
-                ],
-            )
+        model=config["query_translation_model"]["model"],
+        messages=[
+            {"role": "system", "content": config["query_translation_model"]["system_prompt"]},
+            {"role": "user", "content": query}
+        ],
+    )
     return response.choices[0].message.content
+
+
 def is_chinese(text: str) -> bool:
+    """检测文本是否为中文。"""
     if not text or not text.strip():
         return False
     try:
-        return detect(text) == "zh-cn" or detect(text) == "zh"
+        return detect(text) in ("zh-cn", "zh")
     except LangDetectException:
         return False
+
+
 def _apply_reranker(
     query: str,
     candidates: list[dict[str, Any]],
@@ -143,31 +162,6 @@ def _apply_reranker(
     return reranked
 
 
-def _fetch_kg(query: str) -> list[dict[str, Any]]:
-    """从 Neo4j KG 按 query 检索，返回 [{text, doc_id}, ...]。"""
-    try:
-        from neo4j import GraphDatabase
-
-        cfg = config["neo4j"]
-        driver = GraphDatabase.driver(
-            cfg["uri"], auth=(cfg["user"], cfg["password"])
-        )
-        cypher = (
-            "MATCH (a:Article)-[:CONTAINS]->(s:Sentence) "
-            "WHERE s.text CONTAINS $query OR a.title CONTAINS $query "
-            "RETURN a.title AS article, s.text AS sentence LIMIT 15"
-        )
-        with driver.session() as session:
-            recs = session.run(cypher, query=query).data()
-        driver.close()
-        return [
-            {"text": r["sentence"], "doc_id": f"kg_{r['article']}", "score": 0.0}
-            for r in recs
-        ]
-    except Exception:
-        return []
-
-
 def _merge_unique(base: list[dict[str, Any]], extra: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """按文本前缀去重合并。"""
     seen = {d.get("text", "")[:100] for d in base}
@@ -191,6 +185,7 @@ def retrieve_context(req: RetrieveRequest) -> list[dict[str, Any]]:
     use_kg: Optional[bool] = req.use_kg
     if use_kg is None:
         use_kg = (config.get("rag") or {}).get("use_kg", False)
+    kg_cfg: dict[str, Any] = (config.get("rag") or {}).get("kg", {}) or {}
 
     query_en: str
     if config.get("query_translation_model", {}).get("enabled", False) and is_chinese(query):
@@ -230,12 +225,35 @@ def retrieve_context(req: RetrieveRequest) -> list[dict[str, Any]]:
     candidates = sorted(candidates, reverse=True, key=lambda x: x["score"])
 
     if use_kg:
-        kg_docs = _fetch_kg(query_en)
+        max_entities = int(kg_cfg.get("max_entities", 6))
+        max_keywords = int(kg_cfg.get("max_keywords", 6))
+        terms = extract_entities(query_en, max_entities, max_keywords)
+        kg_docs = fetch_docs(terms, kg_cfg)
+        if kg_docs:
+            kg_texts = [d.get("text", "") for d in kg_docs]
+            kg_vectors = _embed_texts(kg_texts)
+            metric = config["rag"].get("distance", "l2")
+            dists = [
+                _distance(query_embedding, vec, metric) for vec in kg_vectors
+            ]
+            if dists:
+                d_min_kg = min(dists)
+                d_max_kg = max(dists)
+                eps_kg = 1e-8
+                for d, dist in zip(kg_docs, dists):
+                    d["score"] = (d_max_kg - dist) / (d_max_kg - d_min_kg + eps_kg)
+            if not reranker:
+                kg_docs = [
+                    d for d in kg_docs
+                    if d.get("score", 0.0) >= score_threshold
+                ]
         candidates = _merge_unique(candidates, kg_docs)
 
     if reranker:
         return _apply_reranker(query_en, candidates, top_k, reranker)
+    candidates = sorted(candidates, reverse=True, key=lambda x: x["score"])
     return candidates[:top_k]
+
 
 @app.post("/retrieve_raw")
 def retrieve_context_raw(req: RetrieveRequest) -> list[dict[str, Any]]:

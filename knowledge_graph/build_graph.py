@@ -13,7 +13,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import spacy
 from neo4j import GraphDatabase
@@ -29,20 +29,20 @@ _nlp: Optional[Any] = None
 ENTITY_TYPES = frozenset({"PERSON", "ORG", "GPE", "LOC", "FAC", "PRODUCT", "EVENT", "WORK_OF_ART"})
 
 
-def extract_entities(text: str) -> List[Tuple[str, str]]:
+def extract_entities(text: str) -> list[tuple[str, str]]:
     """用 spaCy NER 抽取实体，返回 [(name, type), ...]，过滤无关类型。"""
     if _nlp is None:
         return []
     doc: Any = _nlp(text)
-    out: List[Tuple[str, str]] = []
-    seen: set[Tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for ent in doc.ents:
         if ent.label_ not in ENTITY_TYPES:
             continue
         name: str = ent.text.strip()
         if len(name) > 200:
             name = name[:200]
-        key: Tuple[str, str] = (name, ent.label_)
+        key: tuple[str, str] = (name, ent.label_)
         if key in seen:
             continue
         seen.add(key)
@@ -68,7 +68,8 @@ def create_constraints(tx: Any) -> None:
             pass
 
 
-def import_article(tx: Any, article: Dict[str, Any]) -> None:
+def import_article(tx: Any, article: dict[str, Any]) -> None:
+    """导入文章到 Neo4j。"""
     title: str = article.get("title", "")
     if not title:
         return
@@ -88,7 +89,7 @@ def import_article(tx: Any, article: Dict[str, Any]) -> None:
             sent_id=sent_id,
             text=text[:500],
         )
-        entities: List[Tuple[str, str]] = extract_entities(text)
+        entities: list[tuple[str, str]] = extract_entities(text)
         for name, etype in entities:
             tx.run(
                 """
@@ -104,11 +105,12 @@ def import_article(tx: Any, article: Dict[str, Any]) -> None:
             )
 
 
-def import_question(tx: Any, q: Dict[str, Any]) -> None:
+def import_question(tx: Any, q: dict[str, Any]) -> None:
+    """导入问题到 Neo4j。"""
     qid: str = q.get("question_id", "")
     text: str = q.get("text", "")
     answer: str = q.get("answer", "")
-    ref_articles: List[str] = q.get("ref_articles", [])
+    ref_articles: list[str] = q.get("ref_articles", [])
     if not qid:
         return
     tx.run(
@@ -129,10 +131,10 @@ def import_question(tx: Any, q: Dict[str, Any]) -> None:
         )
 
 
-def create_co_occurs(tx: Any, questions: List[Dict[str, Any]]) -> None:
+def create_co_occurs(tx: Any, questions: list[dict[str, Any]]) -> None:
     """同一问题的多篇文章建立 CO_OCCURS_WITH。"""
     for q in questions:
-        refs: List[str] = q.get("ref_articles", [])
+        refs: list[str] = q.get("ref_articles", [])
         for i, t1 in enumerate(refs):
             for t2 in refs[i + 1 :]:
                 tx.run(
@@ -178,11 +180,11 @@ def main() -> None:
         print("Error: structured_articles.json not found. Run build_hotpot_articles.py first.")
         return
 
-    data: Dict[str, Any] = json.loads(
+    data: dict[str, Any] = json.loads(
         input_path.read_text(encoding="utf-8")
     )
-    articles: List[Dict[str, Any]] = data.get("articles", [])
-    questions: List[Dict[str, Any]] = data.get("questions", [])
+    articles: list[dict[str, Any]] = data.get("articles", [])
+    questions: list[dict[str, Any]] = data.get("questions", [])
 
     print(f"Connecting to Neo4j at {NEO4J_URI}...")
     driver: Any = GraphDatabase.driver(

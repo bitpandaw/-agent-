@@ -1,1 +1,1 @@
-"""Experiment package namespace."""
+"""实验模块命名空间。"""

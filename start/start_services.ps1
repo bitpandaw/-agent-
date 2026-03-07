@@ -1,5 +1,6 @@
 param(
-  [switch]$SkipDocker
+  [switch]$SkipDocker,
+  [switch]$Distributed  # 微服务模式：启动 Embedding + RAG + Gateway；默认单进程（仅 Gateway）
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,11 +34,13 @@ $ragCmd = "$commonEnv; & `"$py`" -m uvicorn rag.rag_pipeline:app --host 0.0.0.0 
 Write-Host "Starting Gateway (8000)..."
 Start-Process -FilePath "powershell" -WorkingDirectory $Root -ArgumentList "-NoExit", "-Command", $gwCmd
 
-Write-Host "Starting Embedding (8011)..."
-Start-Process -FilePath "powershell" -WorkingDirectory $Root -ArgumentList "-NoExit", "-Command", $embedCmd
-
-Write-Host "Starting RAG (8010)..."
-Start-Process -FilePath "powershell" -WorkingDirectory $Root -ArgumentList "-NoExit", "-Command", $ragCmd
+if ($Distributed) {
+  Write-Host "Distributed mode: Starting Embedding (8011), RAG (8010)..."
+  Start-Process -FilePath "powershell" -WorkingDirectory $Root -ArgumentList "-NoExit", "-Command", $embedCmd
+  Start-Process -FilePath "powershell" -WorkingDirectory $Root -ArgumentList "-NoExit", "-Command", $ragCmd
+} else {
+  Write-Host "Single-process mode: Embedding/RAG in-process, only Gateway started."
+}
 
 if (-not $SkipDocker) {
   Write-Host "Starting Neo4j (docker-compose)..."

@@ -1,5 +1,6 @@
-# tools_json.py
-TOOLS_LIST = [
+"""工具 JSON Schema 定义，供 LLM Function Calling 使用。"""
+
+TOOLS_LIST: list[dict] = [
     {
         "type": "function",
         "function": {

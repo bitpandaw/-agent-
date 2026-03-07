@@ -12,8 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
+import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +40,9 @@ def _fetch_rag(
     query: str,
     use_reranker: bool,
     use_kg: bool,
-) -> list[dict]:
+) -> tuple[list[dict], dict[str, Any]]:
+    t0 = time.perf_counter()
+    status_code: int | None = None
     try:
         resp = client.post(
             RAG_URL,
@@ -46,24 +53,40 @@ def _fetch_rag(
             },
             timeout=60,
         )
+        status_code = resp.status_code
         resp.raise_for_status()
         rag = resp.json()
         if isinstance(rag, list):
-            return list(rag)
+            return list(rag), {
+                "ok": True,
+                "status_code": status_code,
+                "latency_ms": (time.perf_counter() - t0) * 1000,
+                "error": None,
+            }
+        return [], {
+            "ok": False,
+            "status_code": status_code,
+            "latency_ms": (time.perf_counter() - t0) * 1000,
+            "error": "Non-list response",
+        }
     except Exception as e:
-        print(f"  Error RAG: {e}")
-    return []
+        return [], {
+            "ok": False,
+            "status_code": status_code,
+            "latency_ms": (time.perf_counter() - t0) * 1000,
+            "error": str(e),
+        }
 
 
-def load_hotpotqa(max_samples: int):
-    """加载 HotpotQA validation，返回 (question, relevant_texts) 列表。"""
+def load_hotpotqa(max_samples: int) -> list[dict[str, Any]]:
+    """加载 HotpotQA validation，返回 {id, idx, question, relevant_texts} 列表。"""
     try:
         from datasets import load_dataset
     except ImportError:
         print("pip install datasets")
         sys.exit(1)
     ds = load_dataset("hotpot_qa", "distractor", split="validation", trust_remote_code=False)
-    samples = []
+    samples: list[dict[str, Any]] = []
     for i in range(min(max_samples, len(ds))):
         s = ds[i]
         ctx_titles = s["context"]["title"]
@@ -77,7 +100,15 @@ def load_hotpotqa(max_samples: int):
                     relevant.add(str(sents[sid]).strip())
                     break
         if relevant:
-            samples.append((s["question"], relevant))
+            sample_id = s.get("_id") or s.get("id") or str(i)
+            samples.append(
+                {
+                    "id": sample_id,
+                    "idx": i,
+                    "question": s["question"],
+                    "relevant_texts": relevant,
+                }
+            )
     return samples
 
 
@@ -91,8 +122,8 @@ def _is_relevant(doc_text: str, relevant_texts: set[str]) -> bool:
 
 
 def compute_metrics(
-    retrieved: list, relevant_texts: set[str], k_values: list[int]
-) -> dict:
+    retrieved: list[dict[str, Any]], relevant_texts: set[str], k_values: list[int]
+) -> dict[str, float]:
     """计算 hit@k, recall@k, precision@k, mrr@k, ndcg@k, map@k, coverage@k。"""
     rel_list = list(relevant_texts)
     hit_rel = [i for i, d in enumerate(retrieved) if _is_relevant(d.get("text", ""), relevant_texts)]
@@ -127,7 +158,7 @@ def compute_metrics(
     return metrics
 
 
-def aggregate(samples_metrics: list[dict], k_values: list[int]) -> dict:
+def aggregate(samples_metrics: list[dict[str, float]], k_values: list[int]) -> dict[str, float]:
     """聚合多样本的指标。"""
     if not samples_metrics:
         return {}
@@ -147,62 +178,179 @@ def aggregate(samples_metrics: list[dict], k_values: list[int]) -> dict:
     return out
 
 
+def _compact_results(
+    results: list[dict],
+    top_n: int,
+    max_text_chars: int,
+) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for d in results[:top_n]:
+        text = (d.get("text") or "").replace("\n", " ").strip()
+        if max_text_chars > 0 and len(text) > max_text_chars:
+            text = text[:max_text_chars] + "..."
+        compact.append(
+            {
+                "doc_id": d.get("doc_id"),
+                "score": d.get("score"),
+                "text": text,
+            }
+        )
+    return compact
+
+
+def _signature(results: list[dict], top_k: int) -> list[str]:
+    sig = []
+    for d in results[:top_k]:
+        doc_id = d.get("doc_id")
+        if doc_id:
+            sig.append(str(doc_id))
+        else:
+            text = (d.get("text") or "").replace("\n", " ").strip()
+            sig.append(text[:80])
+    return sig
+
+
+def _pctl(vals: list[float], p: float) -> float:
+    if not vals:
+        return 0.0
+    vals = sorted(vals)
+    idx = int(round((p / 100.0) * (len(vals) - 1)))
+    return float(vals[max(0, min(idx, len(vals) - 1))])
+
+
+def _safe_git_head() -> str | None:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+        )
+        return out.decode("utf-8", errors="replace").strip()
+    except Exception:
+        return None
+
+
+def _load_config_snapshot() -> str | None:
+    cfg_path = ROOT / "config" / "config.yaml"
+    if not cfg_path.exists():
+        return None
+    return cfg_path.read_text(encoding="utf-8", errors="replace")
+
+
 def _process_one(
     client: httpx.Client,
-    q: str,
-    rel: set[str],
+    sample: dict[str, Any],
     use_reranker: bool,
     use_kg: bool,
     top_ks: list[int],
+    trace_top_n: int,
+    trace_text_chars: int,
+    variant_name: str,
 ) -> dict:
-    rag = _fetch_rag(client, q, use_reranker, use_kg)
-    return compute_metrics(rag, rel, top_ks)
+    q = sample["question"]
+    rel = sample["relevant_texts"]
+    rag, meta = _fetch_rag(client, q, use_reranker, use_kg)
+    metrics = compute_metrics(rag, rel, top_ks)
+    return {
+        "metrics": metrics,
+        "meta": meta,
+        "sample": sample,
+        "results": rag,
+        "trace": {
+            "variant": variant_name,
+            "sample_id": sample["id"],
+            "idx": sample["idx"],
+            "question": q,
+            "relevant_texts": list(rel),
+            "result_count": len(rag),
+            "http": meta,
+            "top_results": _compact_results(rag, trace_top_n, trace_text_chars),
+            "metrics": metrics,
+        },
+    }
 
 
 def run_variant(
     name: str,
     use_reranker: bool,
     use_kg: bool,
-    samples: list[tuple[str, set[str]]],
+    samples: list[dict[str, Any]],
     top_ks: list[int],
     workers: int,
-) -> dict:
+    trace_enabled: bool,
+    trace_path: Path | None,
+    trace_top_n: int,
+    trace_text_chars: int,
+    signature_k: int,
+) -> tuple[dict, dict[str, Any], dict[str, list[str]]]:
     print(f"Running {name}...")
     samples_metrics: list[dict] = []
+    latencies: list[float] = []
+    error_count = 0
+    empty_count = 0
+    signatures: dict[str, list[str]] = {}
+    trace_f = None
+    if trace_enabled and trace_path is not None:
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_f = trace_path.open("w", encoding="utf-8")
     with httpx.Client() as client:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = [
                 ex.submit(
                     _process_one,
                     client,
-                    q,
-                    rel,
+                    sample,
                     use_reranker,
                     use_kg,
                     top_ks,
+                    trace_top_n,
+                    trace_text_chars,
+                    name,
                 )
-                for q, rel in samples
+                for sample in samples
             ]
             for i, f in enumerate(as_completed(futures), 1):
-                samples_metrics.append(f.result())
+                result = f.result()
+                samples_metrics.append(result["metrics"])
+                meta = result["meta"]
+                if not meta.get("ok"):
+                    error_count += 1
+                else:
+                    latencies.append(float(meta.get("latency_ms", 0.0)))
+                if result["trace"]["result_count"] == 0:
+                    empty_count += 1
+                sig = _signature(result["results"], signature_k)
+                signatures[str(result["sample"]["id"])] = sig
+                if trace_f is not None:
+                    trace_f.write(
+                        json.dumps(result["trace"], ensure_ascii=False) + "\n"
+                    )
                 if i % 10 == 0 or i == len(futures):
                     print(f"  {name}: {i}/{len(futures)} done")
-    return aggregate(samples_metrics, top_ks)
+    if trace_f is not None:
+        trace_f.close()
+    stats = {
+        "count": len(samples_metrics),
+        "errors": error_count,
+        "empty_results": empty_count,
+        "avg_latency_ms": (sum(latencies) / len(latencies)) if latencies else 0.0,
+        "p95_latency_ms": _pctl(latencies, 95.0),
+    }
+    return aggregate(samples_metrics, top_ks), stats, signatures
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--max-samples", type=int, default=MAX_SAMPLES)
-    p.add_argument("--top-ks", type=str, default="1,5,10,20,30")
-    p.add_argument(
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max-samples", type=int, default=MAX_SAMPLES)
+    parser.add_argument("--top-ks", type=str, default="1,5,10,20,30")
+    parser.add_argument(
         "--variant",
         type=str,
         default="all",
         choices=["all", "rag_reranker", "rag_kg_reranker"],
     )
-    p.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    p.add_argument("--out", type=str, default=None)
-    return p.parse_args()
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--out", type=str, default=None)
+    return parser.parse_args()
 
 
 def main() -> None:

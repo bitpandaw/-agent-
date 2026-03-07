@@ -1,6 +1,7 @@
-import time
-from typing import Any, Dict, List
+"""Executor 模块：执行 TOOL_REGISTRY 中注册的工具。"""
 
+import time
+from typing import Any
 
 
 def make_result(
@@ -10,7 +11,8 @@ def make_result(
     message: str,
     payload: Any,
     latency_ms: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
+    """构造标准工具返回结果。"""
     return {
         "tool_name": tool_name,
         "ok": ok,
@@ -22,12 +24,13 @@ def make_result(
 
 
 def execute_actions(
-    plan_actions: List[Dict[str, Any]],
-    tool_registry: Dict[str, Any],
-    context: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    tool_events: List[Dict[str, Any]] = []
-    
+    plan_actions: list[dict[str, Any]],
+    tool_registry: dict[str, Any],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """执行 plan_actions 中的所有工具调用。"""
+    tool_events: list[dict[str, Any]] = []
+
     for action in plan_actions:
         start: float = time.perf_counter()
         tool_name: str | None = action.get("tool_name")

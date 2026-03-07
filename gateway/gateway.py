@@ -1,3 +1,5 @@
+"""FastAPI 网关入口，提供 /chat 和 /health 接口。"""
+
 import uuid
 from typing import Any
 
@@ -5,9 +7,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from config.config_loader import config
-from orchestrator.orchestrator import initialize_runtime, run_turn
 from gateway.SessionStore import SessionStore
-import state.state_logger as state_logger
+from orchestrator.orchestrator import initialize_runtime, run_turn
+from state import state_logger
 
 
 class ChatRequest(BaseModel):

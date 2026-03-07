@@ -12,7 +12,7 @@ from typing import Any
 
 from config.config_loader import config
 
-SEED_FILE = Path(__file__).resolve().parent / "hotpotqa_db_seed.json"
+SEED_FILE: Path = Path(__file__).resolve().parent / "hotpotqa_db_seed.json"
 
 
 def _load_from_seed() -> list[tuple[str, str, str, str]] | None:

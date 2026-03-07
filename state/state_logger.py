@@ -1,13 +1,16 @@
+"""会话状态日志模块。"""
+
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from config.config_loader import config
 
 
-def init_session_state(session_id: str) -> Dict[str, Any]:
-    session_state: Dict[str, Any] = {
+def init_session_state(session_id: str) -> dict[str, Any]:
+    """初始化会话状态。"""
+    session_state: dict[str, Any] = {
         "session_id": session_id,
         "create_at": datetime.now().isoformat(),
         "turn_count": 0,
@@ -18,9 +21,10 @@ def init_session_state(session_id: str) -> Dict[str, Any]:
 
 
 def log_turn(
-    session_state: Dict[str, Any], turn_result: Dict[str, Any]
-) -> Dict[str, Any]:
-    turn_log: Dict[str, Any] = {
+    session_state: dict[str, Any], turn_result: dict[str, Any]
+) -> dict[str, Any]:
+    """记录单轮对话日志。"""
+    turn_log: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "turn_id": turn_result.get("turn_id"),
         "user_input": turn_result.get("user_input", ""),
@@ -40,7 +44,8 @@ def log_turn(
     return turn_log
 
 
-def flush_state(session_state: Dict[str, Any]) -> None:
+def flush_state(session_state: dict[str, Any]) -> None:
+    """将会话状态写入文件。"""
     jsonw: str = json.dumps(session_state, ensure_ascii=False, indent=2)
     record_path: Path = Path(config["paths"]["record_file"])
     record_path.parent.mkdir(parents=True, exist_ok=True)

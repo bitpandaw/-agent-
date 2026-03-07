@@ -1,30 +1,23 @@
+"""Planner 模块：调用 LLM 解析 tool_calls。"""
+
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from tools.tools_json import TOOLS_LIST
 
 
-def build_turn_input(
-    session_id: str,
-    turn_id: int,
-    user_input: str,
-) -> Dict[str, Any]:
-    return {
-        "session_id": session_id,
-        "turn_id": turn_id,
-        "user_input": user_input,
-    }
-
 
 def plan_actions(
-    turn_input: Dict[str, Any],
-    context: Dict[str, Any],
-) -> Dict[str, Any]:
-    result: Dict[str, Any] = {"actions": [], "tools_schema": []}
-    actions: List[Dict[str, Any]] = []
-    conversation: list[Dict[str, Any]] = context["conversation"]
-    max_retries: int = 10
+    turn_input: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """调用 LLM 获取 tool_calls，解析为 actions 列表。"""
+    result: dict[str, Any] = {"actions": []}
+    actions: list[dict[str, Any]] = []
+    conversation: list[dict[str, Any]] = context["conversation"]
+    max_retries: int = 3
+
     for attempt in range(max_retries):
         try:
             client: Any = context["client"]
@@ -36,22 +29,26 @@ def plan_actions(
             break
         except Exception as e:
             if attempt == max_retries - 1:
-                raise RuntimeError(f"LLM request failed after {max_retries} retries: {e}") from e
+                raise RuntimeError(
+                    f"LLM request failed after {max_retries} retries: {e}"
+                ) from e
             time.sleep(10)
-    ai_reply: Any = response.choices[0].message
+
+    ai_reply = response.choices[0].message
     if not ai_reply.tool_calls:
         conversation.append({
             "role": "assistant",
             "content": ai_reply.content,
         })
         return result
-    else:
-        conversation.append({
-            "role": "assistant",
-            "content": ai_reply.content or "",
-            "tool_calls": [tc.to_dict() for tc in ai_reply.tool_calls],
-        })
-    tools_schema: list[Dict[str, Any]] = [
+
+    conversation.append({
+        "role": "assistant",
+        "content": ai_reply.content or "",
+        "tool_calls": [tc.to_dict() for tc in ai_reply.tool_calls],
+    })
+
+    tools_schema: list[dict[str, Any]] = [
         {
             "tool_name": tc.function.name,
             "tool_args": json.loads(tc.function.arguments),
@@ -59,11 +56,12 @@ def plan_actions(
         }
         for tc in ai_reply.tool_calls
     ]
+
     for action in tools_schema:
         if not isinstance(action, dict):
             continue
         tool_name: Optional[str] = action.get("tool_name")
-        tool_args: Dict[str, Any] = action.get("tool_args", {}) or {}
+        tool_args: dict[str, Any] = action.get("tool_args", {}) or {}
         tool_call_id: Optional[str] = action.get("tool_call_id")
         if not isinstance(tool_args, dict):
             tool_args = {}
@@ -77,5 +75,6 @@ def plan_actions(
             "tool_args": tool_args,
             "tool_call_id": tool_call_id,
         })
+
     result["actions"] = actions
     return result

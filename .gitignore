@@ -24,7 +24,6 @@ hf/
 hf2/
 .hf_cache_test/
 .claude/
-
 # 运行时数据
 chroma_db/
 *.db
@@ -45,6 +44,7 @@ neo4j_data/
 
 # 实验输出（保留脚本，忽略结果）
 experiments/results/
+.cursor/
 
 # 测试
 test/
@@ -52,5 +52,8 @@ test/
 # 开发记录
 开发记录/
 
+#ai工具
+.claude/
+.cursor/
 # 生成的大文件（按需）
 # knowledge_graph/structured_articles.json
